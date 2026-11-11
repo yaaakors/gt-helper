@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru" class="boot">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:">
+<title>GT Помощник</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="titlebar">
+  <span class="mark"></span><span class="brand">GT Помощник</span><span class="section" id="section">Чат</span>
+  <div id="update-box" class="update-box" hidden></div>
+  <span id="version" hidden></span>
+</div>
+<div class="shell">
+<aside class="menu">
+  <nav id="nav">
+    <button data-view="chat" data-label="Чат" class="on"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3 4.5h14v9H9l-4 3v-3H3z"/></svg><span>Чат</span></button>
+    <button data-view="tasks" data-label="Задачи"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5l1.5 1.5 2.5-3M3.5 12.5l1.5 1.5 2.5-3M10.5 6h6M10.5 13h6"/></svg><span>Задачи</span><i class="count" id="tasks-count"></i></button>
+    <button data-view="report" data-label="Отчёт"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 16V9M10 16V4M16 16v-5"/></svg><span>Отчёт</span></button>
+    <button data-view="journal" data-label="Журнал"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h10v13H5zM8 7.5h4M8 10.5h4"/></svg><span>Журнал</span></button>
+    <button data-view="settings" data-label="Настройки" class="last"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 6h14M3 14h14"/><circle cx="7.5" cy="6" r="2" class="knob"/><circle cx="12.5" cy="14" r="2" class="knob"/></svg><span>Настройки</span></button>
+  </nav>
+</aside>
+
+<main>
+  <section id="view-chat" class="view on">
+    <header class="head"><h1>Чат</h1><div class="head-actions"><button class="link" id="chat-help">Что умею</button><button class="link" id="chat-clear">Очистить переписку</button></div></header>
+    <div class="chat" id="chat"></div>
+    <form class="composer" id="composer">
+      <textarea id="chat-input" rows="1" placeholder="Напишите, что сделать. Например: добавь коллекцию …, артикул …"></textarea>
+      <button class="send" type="submit" id="chat-send" aria-label="Отправить" title="Отправить (Enter)"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5"/></svg></button>
+    </form>
+  </section>
+
+  <section id="view-tasks" class="view">
+    <header class="head"><h1>Задачи</h1></header>
+    <div class="page">
+      <form id="task-form" class="row"><input id="task-input" class="grow" type="text" placeholder="Новая задача. Тег — через решётку: #каталог" autocomplete="off"><button class="btn primary" type="submit">Добавить</button></form>
+      <div class="chips" id="task-tags"></div>
+      <div id="task-list" class="list"></div>
+      <button class="section-toggle" id="done-toggle"></button>
+      <div id="done-list" class="list" hidden></div>
+    </div>
+  </section>
+
+  <section id="view-report" class="view">
+    <header class="head"><h1>Отчёт</h1><div class="head-actions"><button class="btn" id="report-copy">Копировать текстом</button><button class="btn" id="report-xlsx">Сохранить в Excel</button></div></header>
+    <div class="page">
+      <div class="seg" id="report-period"></div>
+      <div class="chips" id="report-tags"></div>
+      <div class="muted" id="report-sum"></div>
+      <div id="report-body"></div>
+    </div>
+  </section>
+
+  <section id="view-journal" class="view">
+    <header class="head"><h1>Журнал</h1><div class="head-actions"><button class="btn" id="journal-open">Показать файл журнала</button></div></header>
+    <div class="page">
+      <p class="muted">Запросы разработчику. Сюда само попадает всё, что программа не поняла или не смогла сделать. По этим записям готовятся обновления.</p>
+      <form id="idea-form" class="row"><input id="idea-input" class="grow" type="text" placeholder="Написать пожелание: чего не хватает, что неудобно" autocomplete="off"><button class="btn" type="submit">Записать</button></form>
+      <div id="journal-list" class="list"></div>
+    </div>
+  </section>
+
+  <section id="view-settings" class="view">
+    <header class="head"><h1>Настройки</h1><span class="saved" id="saved" hidden>Сохранено</span></header>
+    <div class="page form" id="settings"></div>
+  </section>
+</main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

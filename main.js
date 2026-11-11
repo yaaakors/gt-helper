@@ -1,0 +1,175 @@
+// Оболочка: окно, связь экрана с модулями, обновления. Вся логика — в папке core (от окна не зависит).
+'use strict';
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const { Store } = require('./core/store');
+const { Journal } = require('./core/journal');
+const { Tasks } = require('./core/tasks');
+const { TileChat } = require('./core/tiles/scenario');
+const sheet = require('./core/tiles/sheet');
+const folders = require('./core/tiles/folders');
+const gemini = require('./core/ai/gemini');
+const themes = require('./core/themes');
+
+if (process.env.GT_USER_DIR) app.setPath('userData', process.env.GT_USER_DIR); // для проверок
+if (!app.requestSingleInstanceLock()) app.quit();
+
+let win; let store; let journal; let tasks; let chat; let update = { state: 'idle' };
+
+const crypt = {
+  encrypt: (s) => (safeStorage.isEncryptionAvailable() ? 'enc:' + safeStorage.encryptString(s).toString('base64') : 'raw:' + s),
+  decrypt: (s) => (s.startsWith('enc:') ? safeStorage.decryptString(Buffer.from(s.slice(4), 'base64')) : s.replace(/^raw:/, '')),
+};
+const ai = {
+  ready: () => !!store.geminiKey,
+  json: (system, user) => gemini.json({ key: store.geminiKey, model: store.get('geminiModel'), system, user }),
+};
+
+// ---------- переписка: храним последние сообщения ----------
+function history() { return store.read('chat.json', { messages: [] }).messages; }
+function remember(list) {
+  const all = history().concat(list);
+  for (const m of list) if (m.planUpdate) { const src = all.find((x) => x.plan && x.plan.id === m.planUpdate.id); if (src) src.plan.status = m.planUpdate.status; }
+  store.write('chat.json', { messages: all.slice(-300) });
+  return list;
+}
+const userMsg = (text) => ({ id: 'u' + Date.now().toString(36), from: 'user', time: new Date().toISOString(), text });
+
+// ---------- обновления ----------
+function sendUpdate(patch) { update = Object.assign({}, update, patch); if (win && !win.isDestroyed()) win.webContents.send('update', update); }
+let updater = null;
+function setupUpdater() {
+  if (!app.isPackaged) { update = { state: 'dev' }; return; }
+  try {
+    updater = require('electron-updater').autoUpdater;
+    updater.autoDownload = false; updater.autoInstallOnAppQuit = true;
+    updater.on('checking-for-update', () => sendUpdate({ state: 'checking', error: '' }));
+    updater.on('update-available', (i) => sendUpdate({ state: 'available', version: i.version }));
+    updater.on('update-not-available', () => sendUpdate({ state: 'latest', checked: new Date().toISOString() }));
+    updater.on('download-progress', (p) => sendUpdate({ state: 'downloading', percent: Math.round(p.percent) }));
+    updater.on('update-downloaded', (i) => sendUpdate({ state: 'ready', version: i.version }));
+    updater.on('error', (e) => sendUpdate({ state: 'error', error: String((e && e.message) || e).split('\n')[0].slice(0, 200) }));
+    setTimeout(() => updater.checkForUpdates().catch(() => {}), 4000);
+    setInterval(() => updater.checkForUpdates().catch(() => {}), 4 * 3600 * 1000);
+  } catch (e) { update = { state: 'error', error: String(e.message || e) }; }
+}
+
+// ---------- состояние настроек для экрана ----------
+async function status() {
+  const out = { sheet: { ok: false, text: 'не указан' }, root: { ok: false, text: 'не указана' }, ai: { ok: ai.ready(), text: ai.ready() ? 'ключ сохранён' : 'ключ не задан — сообщения разбирает скрипт' } };
+  if (store.get('sheetPath')) {
+    try { const m = await sheet.load(store.get('sheetPath')); out.sheet = { ok: true, text: `прочитан: лист «${m.sheetName}», артикулов — ${m.rows.length}` }; } catch (e) { out.sheet = { ok: false, text: String(e.message || e) }; }
+  }
+  if (store.get('catalogRoot')) {
+    const b = folders.brands(store.get('catalogRoot'));
+    if (!b) out.root = { ok: false, text: 'недоступна (нет сети или неверный путь)' };
+    else {
+      // бренды — только те папки, что совпали с ТМ из файла характеристик (остальные папки — не бренды)
+      let found = [];
+      try { const m = await sheet.load(store.get('sheetPath')); found = [...new Set((m.vocab.tm || []).map((tm) => folders.matchBrand(tm, b, store.get('brandFolders'))).filter(Boolean))].sort(); } catch { /* файл не задан */ }
+      out.root = { ok: true, text: found.length ? `доступна. Папки брендов: ${found.join(', ')}` : `доступна, папок внутри — ${b.length}` };
+    }
+  }
+  return out;
+}
+
+// ---------- оформление ----------
+const look = () => themes.describe(store.get('theme'), store.get('colors'));
+function applyLook() {
+  if (!win || win.isDestroyed()) return;
+  const c = look().colors;
+  try { win.setBackgroundColor(c.bg); win.setTitleBarOverlay({ color: c.bg, symbolColor: c.muted, height: 40 }); } catch { /* кнопки окна перекрашиваются только в Windows */ }
+}
+
+function handlers() {
+  const h = (name, fn) => ipcMain.handle(name, async (_e, ...args) => {
+    try { return await fn(...args); } catch (e) {
+      journal.add('error', `${name}: ${e.message || e}`, { stack: String(e.stack || '').split('\n').slice(0, 4) });
+      throw e;
+    }
+  });
+  h('app:info', () => ({ version: app.getVersion(), update, firstRun: !store.get('sheetPath'), look: look() }));
+
+  h('chat:history', () => history().map((m) => { if (m.plan && ['pending', 'failed'].includes(m.plan.status) && !chat.plans.has(m.plan.id)) m.plan.status = 'expired'; return m; }));
+  h('chat:send', async (text) => { const u = userMsg(text); remember([u]); return [u].concat(remember(await chat.handle(text))); });
+  h('chat:execute', async (planId, opts) => remember(await chat.execute(planId, opts)));
+  h('chat:cancel', (planId) => remember(chat.cancel(planId)));
+  h('chat:clear', () => { store.write('chat.json', { messages: [] }); return true; });
+  h('chat:feedback', (msgId, comment) => {
+    const all = history(); const i = all.findIndex((m) => m.id === msgId);
+    const ctx = all.slice(Math.max(0, i - 3), i + 1).map((m) => ({ from: m.from, text: m.text, plan: m.plan ? (m.plan.raw || m.plan.changes) : undefined, results: m.results }));
+    journal.add('feedback', comment || 'Ответ не такой, как ожидалось', { context: ctx }); return true;
+  });
+
+  h('tasks:list', () => tasks.list());
+  h('tasks:add', (text) => tasks.add(text));
+  h('tasks:toggle', (id) => tasks.toggle(id));
+  h('tasks:edit', (id, text) => tasks.edit(id, text));
+  h('tasks:remove', (id) => tasks.remove(id));
+  h('tasks:report', (filter) => tasks.report(filter));
+  h('tasks:export', async (filter) => {
+    const d = new Date(); const name = `Отчёт по задачам ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.xlsx`;
+    const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('documents'), name), filters: [{ name: 'Excel', extensions: ['xlsx'] }] });
+    if (r.canceled || !r.filePath) return null;
+    await tasks.exportXlsx(r.filePath, filter); shell.showItemInFolder(r.filePath); return r.filePath;
+  });
+  h('clipboard:write', (text) => { clipboard.writeText(String(text)); return true; });
+
+  h('journal:list', () => journal.list());
+  h('journal:add', (text) => journal.add('idea', text));
+  h('journal:open', () => { if (!fs.existsSync(journal.file)) fs.writeFileSync(journal.file, ''); shell.showItemInFolder(journal.file); return true; });
+
+  h('settings:get', async () => ({ settings: store.publicSettings(), status: await status(), look: look() }));
+  h('settings:set', async (patch) => { store.set(patch); if ('theme' in patch || 'colors' in patch) applyLook(); return { settings: store.publicSettings(), status: await status(), look: look() }; });
+  h('settings:clearKey', async () => { store.clearKey(); return { settings: store.publicSettings(), status: await status(), look: look() }; });
+  h('settings:pick', async (kind) => {
+    const opt = kind === 'sheetPath'
+      ? { properties: ['openFile'], filters: [{ name: 'Excel', extensions: ['xlsx'] }] }
+      : { properties: ['openDirectory', 'createDirectory'] };
+    const cur = store.get(kind); if (cur) opt.defaultPath = cur;
+    const r = await dialog.showOpenDialog(win, opt);
+    return r.canceled ? null : r.filePaths[0];
+  });
+  h('settings:checkAi', async (key) => {
+    const k = (key || '').trim() || store.geminiKey;
+    if (!k) return { ok: false, text: 'Сначала вставьте ключ' };
+    try {
+      const models = await gemini.check(k);
+      const has = models.includes(store.get('geminiModel'));
+      return { ok: true, text: `Ключ работает, доступно моделей: ${models.length}.` + (has ? '' : ` Модели «${store.get('geminiModel')}» в списке нет — выберите другую.`), models: has ? [] : models.filter((m) => /flash/i.test(m)).slice(0, 12) };
+    } catch (e) { return { ok: false, text: 'Не получилось: ' + (e.message || e) }; }
+  });
+  h('shell:open', (p) => shell.openPath(String(p)));
+
+  h('update:check', async () => { if (updater) await updater.checkForUpdates().catch(() => {}); return update; });
+  h('update:download', async () => { if (updater) updater.downloadUpdate().catch(() => {}); return true; });
+  h('update:install', () => { if (updater) setImmediate(() => updater.quitAndInstall(false, true)); return true; });
+}
+
+function createWindow() {
+  const c = look().colors;
+  win = new BrowserWindow({
+    width: 1120, height: 780, minWidth: 860, minHeight: 560, backgroundColor: c.bg, show: false,
+    titleBarStyle: 'hidden', titleBarOverlay: { color: c.bg, symbolColor: c.muted, height: 40 },
+    title: 'GT Помощник', autoHideMenuBar: true,
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
+  });
+  win.removeMenu();
+  win.loadFile(path.join(__dirname, 'ui', 'index.html'));
+  win.once('ready-to-show', () => win.show());
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+}
+
+app.whenReady().then(() => {
+  store = new Store(app.getPath('userData'), crypt);
+  journal = new Journal(store, app.getVersion());
+  tasks = new Tasks(store);
+  chat = new TileChat({ store, journal, tasks, ai });
+  process.on('uncaughtException', (e) => journal.add('error', String(e.message || e), { stack: String(e.stack || '').split('\n').slice(0, 5) }));
+  process.on('unhandledRejection', (e) => journal.add('error', String((e && e.message) || e)));
+  handlers(); createWindow(); setupUpdater();
+});
+app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+app.on('window-all-closed', () => app.quit());
