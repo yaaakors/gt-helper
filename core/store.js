@@ -15,7 +15,10 @@ function writeJson(file, data) {
 
 const DEFAULTS = {
   dataDir: '',          // пусто = папка программы у пользователя
+  source: 'excel',      // где характеристики: excel | google
   sheetPath: '',        // файл характеристик
+  gsUrl: '',            // адрес веб-приложения Google Таблицы
+  gsToken: '',          // ключ, которым программа подписывает запросы к таблице
   catalogRoot: '',      // корень каталога на сети
   brandFolders: {},     // ТМ -> папка бренда
   geminiModel: 'gemini-3.5-flash-lite',

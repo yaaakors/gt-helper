@@ -51,6 +51,11 @@ function parseLocal(text, model) {
   if ((m = /артикул\p{L}*\s*[:№#]?\s*((?:[\p{L}\d]{4,8})(?:\s*(?:,|и|та|і)\s*[\p{L}\d]{4,8})*)/iu.exec(t))) {
     for (const a of m[1].split(/\s*(?:,|\sи\s|\sта\s|\sі\s)\s*/)) if (/\d/.test(a)) articles.push(a.trim());
   }
+  // «для 46001 …» и любой код, который уже есть в характеристиках
+  if (!articles.length && (m = /(?<![\p{L}])(?:для|у)\s+([\p{L}\d]{4,8})(?![\p{L}\d])/iu.exec(t)) && /\d/.test(m[1]) && !/^\d+[xXхХ]\d+$/u.test(m[1])) articles.push(m[1]);
+  if (!articles.length && model) for (const x of t.matchAll(/(?<![\p{L}\d])[\p{L}\d]{4,8}(?![\p{L}\d])/gu)) {
+    if (/\d/.test(x[0]) && model.byArticle.has(x[0].toLowerCase()) && !articles.includes(x[0])) articles.push(x[0]);
+  }
   // без слова «артикул»: код из больших букв и цифр (FJ2580, 46П01)
   if (!articles.length) for (const x of t.matchAll(/(?<![\p{L}\d])[\p{Lu}\d]{4,8}(?![\p{L}\d+])/gu)) {
     const a = x[0];

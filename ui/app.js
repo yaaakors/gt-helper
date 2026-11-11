@@ -42,7 +42,7 @@ function planCard(plan) {
   const draw = () => {
     card.textContent = '';
     if (plan.mode === 'add') {
-      const part = el('div', { class: 'part' }, el('h3', { text: 'Файл характеристик — добавить' }));
+      const part = el('div', { class: 'part' }, el('h3', { text: (plan.target || 'Файл характеристик') + ' — добавить' }));
       for (const p of plan.products) {
         const kv = el('dl', { class: 'kv' });
         for (const r of p.rows) kv.append(el('dt', { text: r.label }), el('dd', {}, r.value, r.auto && el('span', { class: 'auto', text: r.auto })));
@@ -70,7 +70,7 @@ function planCard(plan) {
         card.append(part2);
       }
     } else {
-      const part = el('div', { class: 'part' }, el('h3', { text: 'Файл характеристик — изменить' }));
+      const part = el('div', { class: 'part' }, el('h3', { text: (plan.target || 'Файл характеристик') + ' — изменить' }));
       for (const v of plan.view) {
         part.append(el('div', { class: 'note', text: `${v.article} · ${v.collection}` }));
         const kv = el('dl', { class: 'kv' });
@@ -299,9 +299,28 @@ async function renderSettings(data) {
       el('div', { class: 'ctl' }, inp, el('button', { class: 'btn', text: btn || 'Выбрать…', onclick: async () => { const p = await api.settings.pick(key); if (p) save({ [key]: p }); } })),
       state && el('div', { class: 'hint ' + (state.ok ? 'ok' : 'bad'), text: (state.ok ? '✓ ' : '') + state.text }), hint && el('div', { class: 'hint', text: hint }));
   };
-  box.append(el('div', { class: 'group' }, el('div', { class: 'cap', text: 'Плитка' }),
-    pathField('sheetPath', 'Файл характеристик', st.sheet, 'Перед каждым изменением программа сохраняет копию файла в папку данных (backups).'),
-    pathField('catalogRoot', 'Папка каталога', st.root, 'Корень на сети, где лежат папки брендов. Можно вставить путь вида \\\\сервер\\папка.')));
+  // источник характеристик: Excel-файл или Google Таблица
+  const src = el('div', { class: 'seg' });
+  for (const [id, label] of [['excel', 'Excel-файл'], ['google', 'Google Таблица']]) src.append(el('button', { class: s.source === id ? 'on' : '', text: label, onclick: () => save({ source: id }) }));
+  const tile = el('div', { class: 'group' }, el('div', { class: 'cap', text: 'Плитка' }), el('div', { class: 'f' }, el('label', { text: 'Характеристики' }), el('div', {}, src)));
+  if (s.source === 'google') {
+    const url = el('input', { type: 'text', class: 'grow', value: s.gsUrl || '', spellcheck: 'false', placeholder: 'https://script.google.com/macros/s/…/exec' });
+    url.addEventListener('change', () => save({ gsUrl: url.value }));
+    const copyBtn = el('button', { class: 'btn', text: 'Скопировать скрипт', onclick: async () => { await api.gsScript(); copyBtn.textContent = 'Скопировано'; setTimeout(() => (copyBtn.textContent = 'Скопировать скрипт'), 1500); } });
+    tile.append(el('div', { class: 'f' }, el('label', { text: 'Подключение' }), el('div', { class: 'ctl' }, copyBtn),
+      el('ol', { class: 'hint steps' },
+        el('li', { text: 'Нажмите «Скопировать скрипт».' }),
+        el('li', { text: 'В Google Таблице: «Расширения» → «Apps Script». Удалите всё в окне, вставьте скрипт (Ctrl+V), сохраните (значок дискеты).' }),
+        el('li', { text: 'Справа вверху: «Начать развертывание» → «Новое развертывание». Тип (шестерёнка) — «Веб-приложение». «Запуск от имени» — «От моего имени», «У кого есть доступ» — «Все». Нажмите «Развернуть» и разрешите доступ к таблице.' }),
+        el('li', { text: 'Скопируйте «URL веб-приложения» и вставьте в поле ниже.' }))),
+      el('div', { class: 'f' }, el('label', { text: 'Адрес веб-приложения' }), el('div', { class: 'ctl' }, url),
+        el('div', { class: 'hint ' + (st.sheet.ok ? 'ok' : 'bad'), text: (st.sheet.ok ? '✓ ' : '') + st.sheet.text }),
+        el('div', { class: 'hint', text: 'Адрес работает только вместе с ключом, который зашит в скрипт, — не пересылайте скрипт другим. Перед каждым изменением программа сохраняет снимок таблицы в папку данных (backups); у самой таблицы есть ещё «История версий».' })));
+  } else {
+    tile.append(pathField('sheetPath', 'Файл характеристик', st.sheet, 'Перед каждым изменением программа сохраняет копию файла в папку данных (backups).'));
+  }
+  tile.append(pathField('catalogRoot', 'Папка каталога', st.root, 'Корень на сети, где лежат папки коллекций. Можно вставить путь вида \\\\сервер\\папка.'));
+  box.append(tile);
 
   // ИИ
   const key = el('input', { type: 'password', class: 'grow', placeholder: s.geminiKeyTail ? 'сохранён, заканчивается на …' + s.geminiKeyTail : 'вставьте ключ из Google AI Studio', autocomplete: 'off' });

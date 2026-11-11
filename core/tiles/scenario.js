@@ -2,6 +2,7 @@
 // ИИ только понимает текст. Файлы и папки меняют обычные функции, и только после «Выполнить».
 'use strict';
 const sheet = require('./sheet');
+const source = require('./source');
 const folders = require('./folders');
 const { understand } = require('./parse');
 
@@ -31,7 +32,7 @@ class TileChat {
         if (text.split(/\s+/).length <= 3) return [this.msg('Не нашёл такого варианта. Выберите кнопкой ниже или напишите «отмена».', { options: this.awaiting.options || [] })];
         this.awaiting = null; this.draft = null; // человек написал другое — начинаем заново
       }
-      const model = await sheet.load(this.store.get('sheetPath'));
+      const model = await source.load(this.store);
       let u; let note = '';
       const ai = this.ai && this.ai.ready() ? (s, t) => this.ai.json(s, t) : null;
       try { u = await understand(text, model, ai); } catch (e) {
@@ -84,7 +85,7 @@ class TileChat {
   }
 
   async advance() {
-    const model = await sheet.load(this.store.get('sheetPath'));
+    const model = await source.load(this.store);
     const d = this.draft; const L = (k) => this.label(model, k);
     return d.mode === 'add' ? this.advanceAdd(model, d, L) : this.advanceUpdate(model, d, L);
   }
@@ -110,7 +111,7 @@ class TileChat {
       if (model.byArticle.has(p.article.toLowerCase())) {
         const ex = model.byArticle.get(p.article.toLowerCase());
         this.draft = null;
-        return [this.msg(`Артикул ${ex.article} уже есть в файле (${ex.collection}, строка ${ex.row}). Если нужно изменить его данные — напишите, например: «для ${ex.article} цвет бежевый».`, { kind: 'warn' })];
+        return [this.msg(`Артикул ${ex.article} уже есть в характеристиках (${ex.collection}, строка ${ex.row}). Если нужно изменить его данные — напишите, например: «для ${ex.article} цвет бежевый».`, { kind: 'warn' })];
       }
       if (!p.collection) return this.ask(`Как называется коллекция${many ? ' для ' + p.article : ''}?`, 'collection', p, { free: true, all: !many || d.products.every((x) => !x.collection) });
       const known = model.collections.get(sheet.norm(p.collection));
@@ -121,7 +122,7 @@ class TileChat {
         const first = String(pr.value).toLowerCase().slice(0, 3);
         const close = pr.list.filter((v) => v.toLowerCase().includes(first));
         const options = (close.length ? close : pr.list).slice(0, 14).concat(['пропустить']);
-        return this.ask(`В файле нет значения «${pr.value}» для поля «${L(pr.key)}». Выберите из существующих или пропустите — заполните позже.`, pr.key, p, { options, skip: 'пропустить', all: d.products.every((x) => x[pr.key] === pr.value) });
+        return this.ask(`В характеристиках нет значения «${pr.value}» для поля «${L(pr.key)}». Выберите из существующих или пропустите — заполните позже.`, pr.key, p, { options, skip: 'пропустить', all: d.products.every((x) => x[pr.key] === pr.value) });
       }
       // правила: считаем сами
       p._auto = p._auto || {};
@@ -133,14 +134,14 @@ class TileChat {
     // план
     const warnings = [];
     for (const p of d.products) {
-      if (p.format && !(model.vocab.format || []).includes(p.format)) warnings.push(`Формат ${p.format} — новый, такого в файле ещё нет.`);
-      if (p.format && p.type && !p.rect) warnings.push(`Ректифікат для ${p.format} не знаю — в файле таких ещё не было. Останется пустым.`);
+      if (p.format && !(model.vocab.format || []).includes(p.format)) warnings.push(`Формат ${p.format} — новый, такого в характеристиках ещё нет.`);
+      if (p.format && p.type && !p.rect) warnings.push(`Ректифікат для ${p.format} не знаю — таких ещё не было. Останется пустым.`);
     }
     const plan = {
       id: uid(), mode: 'add', status: 'pending', warnings: [...new Set(warnings)],
       products: d.products.map((p) => this.view(model, p)),
       raw: d.products.map((p) => { const c = {}; for (const k of ORDER) if (p[k]) c[k] = p[k]; return c; }),
-      sheetFile: this.store.get('sheetPath'),
+      target: source.title(this.store),
       folders: this.folderPlan(d.products),
     };
     this.plans.set(plan.id, plan); this.draft = null; this.awaiting = null;
@@ -183,11 +184,11 @@ class TileChat {
     for (const p of d.products) {
       if (!p.article) return this.ask('К какому артикулу это относится?', 'article', p, { free: true });
       const ex = model.byArticle.get(p.article.toLowerCase());
-      if (!ex) { this.draft = null; return [this.msg(`Артикула ${p.article} в файле нет. Чтобы добавить его, напишите: «добавь ${p.article}, коллекция …».`, { kind: 'warn' })]; }
+      if (!ex) { this.draft = null; return [this.msg(`Артикула ${p.article} в характеристиках нет. Чтобы добавить его, напишите: «добавь ${p.article}, коллекция …».`, { kind: 'warn' })]; }
       for (const pr of this.normalize(model, p)) {
         const first = String(pr.value).toLowerCase().slice(0, 3);
         const close = pr.list.filter((v) => v.toLowerCase().includes(first));
-        return this.ask(`В файле нет значения «${pr.value}» для поля «${L(pr.key)}». Выберите из существующих или пропустите.`, pr.key, p, { options: (close.length ? close : pr.list).slice(0, 14).concat(['пропустить']), skip: 'пропустить', all: d.products.every((x) => x[pr.key] === pr.value) });
+        return this.ask(`В характеристиках нет значения «${pr.value}» для поля «${L(pr.key)}». Выберите из существующих или пропустите.`, pr.key, p, { options: (close.length ? close : pr.list).slice(0, 14).concat(['пропустить']), skip: 'пропустить', all: d.products.every((x) => x[pr.key] === pr.value) });
       }
       const fields = {}; const rows = [];
       for (const k of ORDER) {
@@ -199,10 +200,10 @@ class TileChat {
       if (Object.keys(fields).length) { changes.push({ article: ex.article, fields }); view.push({ article: ex.article, collection: ex.collection, rows }); }
     }
     this.draft = null; this.awaiting = null;
-    if (!changes.length) return [this.msg('Менять нечего: в файле уже стоят такие значения.')];
-    const plan = { id: uid(), mode: 'update', status: 'pending', warnings: [], changes, view, sheetFile: this.store.get('sheetPath') };
+    if (!changes.length) return [this.msg('Менять нечего: такие значения уже стоят.')];
+    const plan = { id: uid(), mode: 'update', status: 'pending', warnings: [], changes, view, target: source.title(this.store) };
     this.plans.set(plan.id, plan);
-    return [this.msg((d.note || '') + 'Понял. Вот что изменю в файле характеристик:', { plan })];
+    return [this.msg((d.note || '') + 'Понял. Вот что изменю:', { plan })];
   }
 
   cancel(planId) {
@@ -220,16 +221,16 @@ class TileChat {
     if (!sheetOk) {
       try {
         if (plan.mode === 'add') {
-          const r = await sheet.addRows(plan.sheetFile, plan.raw, backupDir);
-          results.push({ ok: true, text: `Файл характеристик: добавлено строк — ${r.rows.length} (строки ${r.rows.join(', ')}). Проверено повторным чтением.`, note: 'Копия до изменения: ' + r.backup });
+          const r = await source.addRows(this.store, plan.raw, backupDir);
+          results.push({ ok: true, text: `${plan.target}: добавлено строк — ${r.rows.length} (строки ${r.rows.join(', ')}). Проверено повторным чтением.`, note: 'Копия до изменения: ' + r.backup });
         } else {
-          const r = await sheet.updateRows(plan.sheetFile, plan.changes, backupDir);
-          results.push({ ok: true, text: `Файл характеристик: изменено артикулов — ${plan.changes.length}. Проверено повторным чтением.`, note: 'Копия до изменения: ' + r.backup });
+          const r = await source.updateRows(this.store, plan.changes, backupDir);
+          results.push({ ok: true, text: `${plan.target}: изменено артикулов — ${plan.changes.length}. Проверено повторным чтением.`, note: 'Копия до изменения: ' + r.backup });
         }
         sheetOk = plan.sheetDone = true;
       } catch (e) {
-        results.push({ ok: false, text: 'Файл характеристик: ' + (e.message || e) });
-        this.journal.add('failed', 'Запись в файл характеристик', { error: String(e.message || e), plan: plan.raw || plan.changes });
+        results.push({ ok: false, text: plan.target + ': ' + (e.message || e) });
+        this.journal.add('failed', 'Запись характеристик', { error: String(e.message || e), plan: plan.raw || plan.changes });
       }
     }
     if (sheetOk && plan.mode === 'add') {

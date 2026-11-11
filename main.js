@@ -7,7 +7,9 @@ const { Store } = require('./core/store');
 const { Journal } = require('./core/journal');
 const { Tasks } = require('./core/tasks');
 const { TileChat } = require('./core/tiles/scenario');
-const sheet = require('./core/tiles/sheet');
+const source = require('./core/tiles/source');
+const gsheet = require('./core/tiles/gsheet');
+const crypto = require('crypto');
 const folders = require('./core/tiles/folders');
 const gemini = require('./core/ai/gemini');
 const themes = require('./core/themes');
@@ -58,8 +60,12 @@ function setupUpdater() {
 // ---------- состояние настроек для экрана ----------
 async function status() {
   const out = { sheet: { ok: false, text: 'не указан' }, root: { ok: false, text: 'не указана' }, ai: { ok: ai.ready(), text: ai.ready() ? 'ключ сохранён' : 'ключ не задан — сообщения разбирает скрипт' } };
-  if (store.get('sheetPath')) {
-    try { const m = await sheet.load(store.get('sheetPath')); out.sheet = { ok: true, text: `прочитан: лист «${m.sheetName}», артикулов — ${m.rows.length}` }; } catch (e) { out.sheet = { ok: false, text: String(e.message || e) }; }
+  if (source.configured(store)) {
+    try {
+      const m = await source.load(store);
+      out.sheet = { ok: true, text: source.isGoogle(store) ? `подключена: «${m.docName}», лист «${m.sheetName}», артикулов — ${m.rows.length}` : `прочитан: лист «${m.sheetName}», артикулов — ${m.rows.length}` };
+      if (source.isGoogle(store) && m.scriptVersion < gsheet.SCRIPT_VERSION) out.sheet = { ok: false, text: 'В таблице старая версия скрипта — скопируйте скрипт заново и обновите развёртывание' };
+    } catch (e) { out.sheet = { ok: false, text: String(e.message || e) }; }
   }
   if (store.get('catalogRoot')) {
     const b = folders.brands(store.get('catalogRoot'));
@@ -67,7 +73,7 @@ async function status() {
     else {
       // бренды — только те папки, что совпали с ТМ из файла характеристик (остальные папки — не бренды)
       let found = [];
-      try { const m = await sheet.load(store.get('sheetPath')); found = [...new Set((m.vocab.tm || []).map((tm) => folders.matchBrand(tm, b, store.get('brandFolders'))).filter(Boolean))].sort(); } catch { /* файл не задан */ }
+      try { const m = await source.load(store); found = [...new Set((m.vocab.tm || []).map((tm) => folders.matchBrand(tm, b, store.get('brandFolders'))).filter(Boolean))].sort(); } catch { /* файл не задан */ }
       out.root = { ok: true, text: found.length ? `доступна. Папки брендов: ${found.join(', ')}` : `доступна, папок внутри — ${b.length}` };
     }
   }
@@ -89,7 +95,7 @@ function handlers() {
       throw e;
     }
   });
-  h('app:info', () => ({ version: app.getVersion(), update, firstRun: !store.get('sheetPath'), look: look() }));
+  h('app:info', () => ({ version: app.getVersion(), update, firstRun: !source.configured(store), look: look() }));
 
   h('chat:history', () => history().map((m) => { if (m.plan && ['pending', 'failed'].includes(m.plan.status) && !chat.plans.has(m.plan.id)) m.plan.status = 'expired'; return m; }));
   h('chat:send', async (text) => { const u = userMsg(text); remember([u]); return [u].concat(remember(await chat.handle(text))); });
@@ -139,6 +145,11 @@ function handlers() {
       const has = models.includes(store.get('geminiModel'));
       return { ok: true, text: `Ключ работает, доступно моделей: ${models.length}.` + (has ? '' : ` Модели «${store.get('geminiModel')}» в списке нет — выберите другую.`), models: has ? [] : models.filter((m) => /flash/i.test(m)).slice(0, 12) };
     } catch (e) { return { ok: false, text: 'Не получилось: ' + (e.message || e) }; }
+  });
+  h('gs:script', () => {
+    if (!store.get('gsToken')) store.set({ gsToken: crypto.randomBytes(24).toString('hex') });
+    clipboard.writeText(gsheet.script(store.get('gsToken'), fs.readFileSync(path.join(__dirname, 'google', 'Code.gs'), 'utf8')));
+    return true;
   });
   h('shell:open', (p) => shell.openPath(String(p)));
 

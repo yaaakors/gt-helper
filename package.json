@@ -1,7 +1,7 @@
 {
   "name": "gt-helper",
   "productName": "GT Помощник",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Личный помощник: чат для работы с плиткой и планировщик задач",
   "author": "Vit",
   "license": "UNLICENSED",
@@ -24,7 +24,7 @@
     "appId": "ua.vit.gthelper",
     "productName": "GT Помощник",
     "artifactName": "GT-Helper-Setup-${version}.${ext}",
-    "files": ["main.js", "preload.js", "core/**", "ui/**", "package.json"],
+    "files": ["main.js", "preload.js", "core/**", "ui/**", "google/**", "package.json"],
     "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
     "nsis": { "oneClick": true, "perMachine": false, "createDesktopShortcut": true, "shortcutName": "GT Помощник", "deleteAppDataOnUninstall": false, "language": "1049" },
     "publish": [{ "provider": "github", "owner": "yaaakors", "repo": "gt-helper", "releaseType": "release" }]

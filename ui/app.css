@@ -159,3 +159,6 @@ html.boot body { visibility: hidden; }
 .colors input[type=color]::-webkit-color-swatch { border: 0; border-radius: 4px; }
 .colors .hex { color: var(--muted); font: 12px Consolas, monospace; margin-left: 8px; }
 .colors .mine { color: var(--gold-d); font-size: 12px; margin-left: 8px; }
+
+.form .steps { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.form .seg { margin-bottom: 0; }

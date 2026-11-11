@@ -63,22 +63,30 @@ function majority(map) { // {ключ: {значение: сколько}} -> {�
   return out;
 }
 
-let cache = null;
-/** Прочитать файл: строки, справочники, правила. Повторно читает только если файл изменился. */
-async function load(file) {
-  if (!file) throw new Error('Не указан файл характеристик (Настройки)');
-  if (!fs.existsSync(file)) throw new Error('Файл характеристик не найден: ' + file);
-  const mtime = fs.statSync(file).mtimeMs;
-  if (cache && cache.file === file && cache.mtime === mtime) return cache;
-  const { wb, ws, info } = await open(file);
+/**
+ * Собрать модель из сетки значений (общая для Excel и Google Таблицы).
+ * grid — строки листа, начиная с первой; colorRows — строки листа «Кольори» (с заголовком).
+ */
+function modelFromGrid(grid, colorRows, meta) {
+  const text = (r, c) => cellText(grid[r - 1] ? grid[r - 1][c - 1] : null);
+  let headerRow = 0;
+  for (let r = 1; r <= 6 && !headerRow; r++) if (norm(text(r, 1)) === 'артикул') headerRow = r;
+  if (!headerRow) throw new Error('Не найдена строка заголовков (ячейка «Артикул» в первой колонке)');
+  const cols = {}; const labels = {};
+  (grid[headerRow - 1] || []).forEach((v, i) => {
+    const raw = cellText(v); const h = norm(raw);
+    for (const [key, test] of FIELDS) if (!cols[key] && test(h)) { cols[key] = i + 1; labels[key] = raw.split('\n')[0].trim(); }
+  });
+  for (const need of ['article', 'tm', 'collection']) if (!cols[need]) throw new Error(`Нет колонки для поля «${need}»`);
   const rows = []; const byArticle = new Map(); const counts = {}; const collections = new Map();
-  const rectVotes = {}; const frostVotes = {};
-  for (let r = info.headerRow + 1; r <= info.last; r++) {
-    const row = ws.getRow(r); const rec = { row: r };
-    for (const [key, col] of Object.entries(info.cols)) rec[key] = cellText(row.getCell(col).value);
+  const rectVotes = {}; const frostVotes = {}; let last = headerRow;
+  for (let r = headerRow + 1; r <= grid.length; r++) {
+    const rec = { row: r };
+    for (const [key, col] of Object.entries(cols)) rec[key] = text(r, col);
     if (!rec.article) continue;
+    last = r;
     rows.push(rec); byArticle.set(rec.article.toLowerCase(), rec);
-    for (const key of Object.keys(info.cols)) if (rec[key]) { (counts[key] = counts[key] || {})[rec[key]] = (counts[key][rec[key]] || 0) + 1; }
+    for (const key of Object.keys(cols)) if (rec[key]) { (counts[key] = counts[key] || {})[rec[key]] = (counts[key][rec[key]] || 0) + 1; }
     if (rec.collection) {
       const c = collections.get(norm(rec.collection)) || { name: rec.collection, tm: {} };
       if (rec.tm) c.tm[rec.tm] = (c.tm[rec.tm] || 0) + 1;
@@ -89,17 +97,28 @@ async function load(file) {
   }
   const vocab = {};
   for (const [key, c] of Object.entries(counts)) vocab[key] = Object.entries(c).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
-  // Лист «Кольори»: колір -> група
-  const colors = {};
-  const cs = wb.worksheets.find((s) => norm(s.name) === 'кольори');
-  if (cs) cs.eachRow((row, i) => { if (i > 1) { const c = cellText(row.getCell(1).value); if (c) colors[c] = cellText(row.getCell(2).value); } });
+  const colors = {}; // колір -> група
+  (colorRows || []).forEach((row, i) => { if (i > 0) { const c = cellText(row[0]); if (c) colors[c] = cellText(row[1]); } });
   // Составные значения («мармур, геометрія») -> отдельные слова
   const parts = (key) => [...new Set((vocab[key] || []).flatMap((v) => v.split(',').map((x) => x.trim())).filter(Boolean))];
-  cache = {
-    file, mtime, sheetName: ws.name, labels: info.labels, cols: info.cols, rows, byArticle, collections, vocab, colors,
+  return Object.assign({
+    headerRow, last, labels, cols, rows, byArticle, collections, vocab, colors,
     designParts: parts('design'), usageParts: parts('usage'),
     rectRule: majority(rectVotes), frostRule: majority(frostVotes),
-  };
+  }, meta);
+}
+
+let cache = null;
+/** Прочитать файл: строки, справочники, правила. Повторно читает только если файл изменился. */
+async function load(file) {
+  if (!file) throw new Error('Не указан файл характеристик (Настройки)');
+  if (!fs.existsSync(file)) throw new Error('Файл характеристик не найден: ' + file);
+  const mtime = fs.statSync(file).mtimeMs;
+  if (cache && cache.file === file && cache.mtime === mtime) return cache;
+  const { wb, ws } = await open(file);
+  const sheetGrid = (sh) => { const g = []; sh.eachRow({ includeEmpty: true }, (row, i) => { const line = []; row.eachCell({ includeEmpty: true }, (c, j) => { line[j - 1] = c.value; }); g[i - 1] = line; }); return g; };
+  const cs = wb.worksheets.find((x) => norm(x.name) === 'кольори');
+  cache = modelFromGrid(sheetGrid(ws), cs ? sheetGrid(cs) : [], { file, mtime, sheetName: ws.name, title: 'Файл характеристик' });
   return cache;
 }
 
@@ -210,4 +229,4 @@ async function updateRows(file, changes, backupDir) {
   return { backup: copy };
 }
 
-module.exports = { load, addRows, updateRows, backup, FIELDS: FIELDS.map((f) => f[0]), CLOSED, NUMERIC, norm };
+module.exports = { load, addRows, updateRows, backup, modelFromGrid, typed, cellText, FIELDS: FIELDS.map((f) => f[0]), CLOSED, NUMERIC, norm };
