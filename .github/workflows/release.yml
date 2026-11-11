@@ -23,7 +23,8 @@ jobs:
         run: |
           v=$(node -p "require('./package.json').version")
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          if gh release view "v$v" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+          # выпуск считается готовым, только если в нём есть latest.yml (по нему программа узнаёт об обновлении)
+          if gh release view "v$v" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "latest.yml"; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
       - if: steps.check.outputs.exists == 'false'
         run: npm ci
       - if: steps.check.outputs.exists == 'false'
@@ -36,4 +37,8 @@ jobs:
         run: |
           v="${{ steps.check.outputs.version }}"
           ls dist
-          gh release create "v$v" dist/latest.yml dist/*.exe dist/*.exe.blockmap -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "GT Помощник $v" --notes "Установщик: GT-Helper-Setup-$v.exe"
+          if gh release view "v$v" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "v$v" dist/latest.yml dist/*.exe dist/*.exe.blockmap -R "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "v$v" dist/latest.yml dist/*.exe dist/*.exe.blockmap -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "GT Помощник $v" --notes "Установщик: GT-Helper-Setup-$v.exe"
+          fi
