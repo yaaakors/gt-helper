@@ -328,17 +328,35 @@ function applyLook(look) {
 // ---------- настройки ----------
 let updateState = { state: 'idle' }; let appVersion = '';
 function flashSaved() { const s = $('#saved'); s.hidden = false; clearTimeout(flashSaved.t); flashSaved.t = setTimeout(() => (s.hidden = true), 1500); }
-async function renderSettings(data) {
-  const { settings: s, status: st, look } = data || await api.settings.get();
+// Проверки связи (таблица, сетевая папка) идут отдельно от показа настроек — они медленные.
+const WAIT = { ok: null, text: 'проверяю…' };
+let lastStatus = null; let statusRun = 0;
+function statusHint(key, st) {
+  const x = (st || {})[key] || WAIT;
+  const n = el('div', { class: 'hint' }); n.dataset.status = key; paintHint(n, x); return n;
+}
+function paintHint(n, x) { n.className = 'hint' + (x.ok === true ? ' ok' : x.ok === false && n.dataset.status !== 'ai' ? ' bad' : ''); n.textContent = (x.ok === true ? '✓ ' : '') + x.text; }
+async function refreshStatus() {
+  const run = ++statusRun;
+  document.querySelectorAll('#settings [data-status]').forEach((n) => { if (!lastStatus) paintHint(n, WAIT); });
+  let st; try { st = await api.settings.status(); } catch { return; }
+  if (run !== statusRun) return; // пока проверяли, настройки поменяли ещё раз
+  lastStatus = st;
+  document.querySelectorAll('#settings [data-status]').forEach((n) => paintHint(n, st[n.dataset.status] || WAIT));
+}
+const STATUS_KEYS = ['source', 'sheetPath', 'gsUrl', 'catalogRoot', 'geminiKey', 'dataDir'];
+async function renderSettings(data, recheck = true) {
+  const { settings: s, look } = data || await api.settings.get();
+  const st = lastStatus;
   applyLook(look);
   const box = $('#settings'); box.textContent = '';
-  const save = async (patch) => { const d = await api.settings.set(patch); flashSaved(); renderSettings(d); };
+  const save = async (patch) => { const d = await api.settings.set(patch); flashSaved(); const again = Object.keys(patch).some((k) => STATUS_KEYS.includes(k)); if (again) lastStatus = null; renderSettings(d, again); };
   const pathField = (key, label, state, hint, btn) => {
     const inp = el('input', { type: 'text', class: 'grow', value: s[key] || '', spellcheck: 'false' });
     inp.addEventListener('change', () => save({ [key]: inp.value }));
     return el('div', { class: 'f' }, el('label', { text: label }),
       el('div', { class: 'ctl' }, inp, el('button', { class: 'btn', text: btn || 'Выбрать…', onclick: async () => { const p = await api.settings.pick(key); if (p) save({ [key]: p }); } })),
-      state && el('div', { class: 'hint ' + (state.ok ? 'ok' : 'bad'), text: (state.ok ? '✓ ' : '') + state.text }), hint && el('div', { class: 'hint', text: hint }));
+      state && statusHint(state, st), hint && el('div', { class: 'hint', text: hint }));
   };
   // источник характеристик: Excel-файл или Google Таблица
   const src = el('div', { class: 'seg' });
@@ -355,17 +373,17 @@ async function renderSettings(data) {
         el('li', { text: 'Справа вверху: «Начать развертывание» → «Новое развертывание». Тип (шестерёнка) — «Веб-приложение». «Запуск от имени» — «От моего имени», «У кого есть доступ» — «Все». Нажмите «Развернуть» и разрешите доступ к таблице.' }),
         el('li', { text: 'Скопируйте «URL веб-приложения» и вставьте в поле ниже.' }))),
       el('div', { class: 'f' }, el('label', { text: 'Адрес веб-приложения' }), el('div', { class: 'ctl' }, url),
-        el('div', { class: 'hint ' + (st.sheet.ok ? 'ok' : 'bad'), text: (st.sheet.ok ? '✓ ' : '') + st.sheet.text }),
+        statusHint('sheet', st),
         el('div', { class: 'hint', text: 'Адрес работает только вместе с ключом, который зашит в скрипт, — не пересылайте скрипт другим. Перед каждым изменением программа сохраняет снимок таблицы в папку данных (backups); у самой таблицы есть ещё «История версий».' })));
   } else {
-    tile.append(pathField('sheetPath', 'Файл характеристик', st.sheet, 'Перед каждым изменением программа сохраняет копию файла в папку данных (backups).'));
+    tile.append(pathField('sheetPath', 'Файл характеристик', 'sheet', 'Перед каждым изменением программа сохраняет копию файла в папку данных (backups).'));
   }
-  tile.append(pathField('catalogRoot', 'Папка каталога', st.root, 'Корень на сети, где лежат папки коллекций. Можно вставить путь вида \\\\сервер\\папка.'));
+  tile.append(pathField('catalogRoot', 'Папка каталога', 'root', 'Корень на сети, где лежат папки коллекций. Можно вставить путь вида \\\\сервер\\папка.'));
   box.append(tile);
 
   // ИИ
   const key = el('input', { type: 'password', class: 'grow', placeholder: s.geminiKeyTail ? 'сохранён, заканчивается на …' + s.geminiKeyTail : 'вставьте ключ из Google AI Studio', autocomplete: 'off' });
-  const aiHint = el('div', { class: 'hint ' + (st.ai.ok ? 'ok' : ''), text: (st.ai.ok ? '✓ ' : '') + st.ai.text });
+  const aiHint = statusHint('ai', st);
   const models = el('div', { class: 'hint chips' });
   const model = el('input', { type: 'text', class: 'grow', value: s.geminiModel, spellcheck: 'false' });
   model.addEventListener('change', () => save({ geminiModel: model.value }));
@@ -410,6 +428,7 @@ async function renderSettings(data) {
   box.append(el('div', { class: 'group' }, el('div', { class: 'cap', text: 'Обновления' }),
     el('div', { class: 'f' }, el('label', { text: 'Версия' }), el('div', { class: 'ctl' }, el('span', { style: 'padding-top:6px', text: appVersion }), el('button', { class: 'btn', text: 'Проверить обновления', disabled: u.state === 'dev', onclick: async () => { await api.update.check(); } })),
       el('div', { class: 'hint' + (u.state === 'error' ? ' bad' : ''), text: map[u.state] || '' }))));
+  if (recheck) refreshStatus();
 }
 
 // ---------- обновления ----------
@@ -419,7 +438,7 @@ function renderUpdate(u) {
   if (u.state === 'available') box.append(el('b', { text: 'Новая версия ' + u.version }), el('button', { text: 'Обновить', onclick: () => api.update.download() }));
   if (u.state === 'downloading') box.append(el('b', { text: 'Загружаю обновление' }), `${u.percent || 0}%`, el('div', { class: 'bar' }, el('i', { style: `width:${u.percent || 0}%` })));
   if (u.state === 'ready') box.append(el('b', { text: 'Обновление готово' }), el('button', { text: 'Перезапустить', onclick: () => api.update.install() }));
-  if ($('#view-settings').classList.contains('on')) renderSettings();
+  if ($('#view-settings').classList.contains('on')) renderSettings(undefined, false);
 }
 api.update.on(renderUpdate);
 

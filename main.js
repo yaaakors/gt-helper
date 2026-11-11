@@ -127,9 +127,10 @@ function handlers() {
   h('journal:add', (text) => journal.add('idea', text));
   h('journal:open', () => { if (!fs.existsSync(journal.file)) fs.writeFileSync(journal.file, ''); shell.showItemInFolder(journal.file); return true; });
 
-  h('settings:get', async () => ({ settings: store.publicSettings(), status: await status(), look: look() }));
-  h('settings:set', async (patch) => { store.set(patch); if ('theme' in patch || 'colors' in patch) applyLook(); return { settings: store.publicSettings(), status: await status(), look: look() }; });
-  h('settings:clearKey', async () => { store.clearKey(); return { settings: store.publicSettings(), status: await status(), look: look() }; });
+  h('settings:get', () => ({ settings: store.publicSettings(), look: look() })); // сразу, без проверок
+  h('settings:status', () => status());                                               // проверки связи — отдельно, они медленные
+  h('settings:set', (patch) => { store.set(patch); if ('theme' in patch || 'colors' in patch) applyLook(); return { settings: store.publicSettings(), look: look() }; });
+  h('settings:clearKey', () => { store.clearKey(); return { settings: store.publicSettings(), look: look() }; });
   h('settings:pick', async (kind) => {
     const opt = kind === 'sheetPath'
       ? { properties: ['openFile'], filters: [{ name: 'Excel', extensions: ['xlsx'] }] }
