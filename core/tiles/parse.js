@@ -102,6 +102,17 @@ function parseLocal(text, model) {
   else if (/не\s+норму/iu.test(low)) f.r = 'не нормується';
   if ((m = /(?<!\d)(\d{13})(?!\d)/.exec(t))) f.ean = m[1];
 
+  // название коллекции без слова «коллекция» — если такая уже есть в характеристиках
+  if (!f.collection && model) {
+    let best = '';
+    for (const c of model.collections.values()) {
+      if (c.name.length < 4 || c.name.length <= best.length) continue;
+      if (new RegExp('(?<![\\p{L}\\d])' + c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\d])', 'iu').test(t)) best = c.name;
+    }
+    if (best) f.collection = best;
+  }
+  // вопрос: «что есть по ON099?», «покажи коллекцию Fjord Rock»
+  const ask = /^\s*(что|шо|покажи|показать|найди|инф|данные|расскажи|есть ли|какой|какая|какие|сколько|ск[іи]льки|где|де|як[іи]й)(?![\p{L}])|\?\s*$/iu.test(text);
   const hasFields = Object.keys(f).length > 0;
   const addWord = /добав|додай|додат|создай|створи|заведи|нов(ая|ую|а|у)\s+кол/iu.test(low);
   const updWord = /обнов|онов|измен|зм[іи]н|дополн|внеси|постав|укажи|вкажи|исправ|виправ/iu.test(low);
@@ -109,9 +120,11 @@ function parseLocal(text, model) {
   const known = model ? articles.filter((a) => model.byArticle.has(a.toLowerCase())) : [];
   if (articles.length) intent = known.length === articles.length && !addWord ? 'update' : 'add';
   else if (addWord && (f.collection || hasFields)) intent = 'add';
-  else if (hasFields) intent = updWord || !f.collection ? 'update' : 'add';
+  else if (hasFields && updWord) intent = 'update';
+  else if (hasFields && !f.collection && !ask) intent = 'update'; // «PEI 4, R10» — продолжение про последний артикул
   const products = articles.length ? articles.map((a) => Object.assign({ article: a }, f)) : (hasFields ? [f] : []);
-  return { intent, products, task: '' };
+  if (ask && !addWord && !updWord && (articles.length || f.collection)) intent = 'info';
+  return { intent, products, task: '', explicit: addWord || updWord || articles.length > 0 };
 }
 
 const FIELD_DOC = {
@@ -124,8 +137,9 @@ function aiPrompt(model) {
   const list = (key, max = 60) => (model.vocab[key] || []).slice(0, max).join(' | ');
   return [
     'Ты разбираешь сообщения сотрудника завода керамической плитки Golden Tile. Сообщения на русском или украинском.',
-    'Верни ТОЛЬКО JSON вида: {"intent": "...", "products": [{...}], "task": ""}.',
-    'intent: "add" — добавить новые артикулы/коллекцию (также когда просят создать только папку коллекции без артикула — тогда в products один объект с collection); "update" — дополнить или изменить данные существующих артикулов; "task" — записать задачу в планировщик (текст задачи в поле task); "unknown" — всё остальное.',
+    'Верни ТОЛЬКО JSON вида: {"intent": "...", "products": [{...}], "task": "", "reply": ""}.',
+    'intent: "add" — добавить новые артикулы/коллекцию (также когда просят создать только папку коллекции без артикула — тогда в products один объект с collection); "update" — дополнить или изменить данные существующих артикулов (в сообщении есть новые значения); "info" — вопрос о том, что уже есть: показать данные артикула или коллекции (в products объект с article или collection); "task" — записать задачу в планировщик (текст задачи в поле task); "chat" — приветствие, благодарность, вопрос о возможностях программы или общий вопрос о плитке: ответ дай в поле reply, коротко, по-русски, без жаргона; "unknown" — просьба сделать то, чего программа не умеет.',
+    'Программа умеет ТОЛЬКО: добавить артикул/коллекцию в характеристики и создать папки коллекции; создать только папки коллекции; дополнить или изменить данные артикула; показать данные артикула или коллекции; записать задачу. В reply нельзя писать, что что-то сделано, будет сделано или найдено — действий ты не выполняешь и данных не видишь.',
     'products — по одному объекту на артикул. Если артикулов несколько и у них разные цвета/форматы — раздели правильно. Поля объекта (включай только то, что прямо сказано в сообщении, ничего не выдумывай):',
     ...Object.entries(FIELD_DOC).map(([k, v]) => `- ${k}: ${v}`),
     'Значения переводи на украинский и бери ТОЛЬКО из списков, если подходящее есть:',
@@ -142,7 +156,7 @@ async function understand(text, model, ai) {
   const local = parseLocal(text, model);
   if (!ai || local.intent === 'task') return Object.assign(local, { via: 'script' });
   const res = await ai(aiPrompt(model), text);
-  const intent = ['add', 'update', 'task', 'unknown'].includes(res && res.intent) ? res.intent : 'unknown';
+  const intent = ['add', 'update', 'info', 'task', 'chat', 'unknown'].includes(res && res.intent) ? res.intent : 'unknown';
   let products = Array.isArray(res && res.products) ? res.products.filter((p) => p && typeof p === 'object') : [];
   products = products.map((p) => {
     const out = {};
@@ -151,7 +165,10 @@ async function understand(text, model, ai) {
   }).filter((p) => Object.keys(p).length);
   // то, что скрипт находит надёжно (формат, артикул, толщина), сверяем
   if (products.length === 1 && local.products.length === 1) for (const k of ['format', 'thickness', 'article']) if (!products[0][k] && local.products[0][k]) products[0][k] = local.products[0][k];
-  if (intent === 'unknown' && local.intent !== 'unknown') return Object.assign(local, { via: 'script' });
-  return { intent, products, task: String((res && res.task) || ''), via: 'ai' };
+  const reply = String((res && res.reply) || '').slice(0, 1500);
+  // ИИ не распознал команду, а скрипт видит явную (есть глагол, артикул или вопрос про артикул) — верим скрипту
+  if ((intent === 'unknown' || (intent === 'chat' && !reply)) && (local.intent === 'info' || (local.intent !== 'unknown' && local.explicit))) return Object.assign(local, { via: 'script' });
+  if (local.intent === 'info' && intent === 'update') return Object.assign(local, { via: 'script' }); // вопрос — не правка
+  return { intent, products, task: String((res && res.task) || ''), reply, via: 'ai' };
 }
 module.exports = { parseLocal, understand };

@@ -53,15 +53,15 @@ function planCard(plan) {
       card.append(part);
       }
       for (const f of plan.folders) {
-        const part2 = el('div', { class: 'part' }, el('h3', { text: 'Папки на сети — создать' }));
+        const part2 = el('div', { class: 'part' }, el('h3', { text: 'Папки на сети — ' + (f.exists ? (f.missing.length ? 'досоздать подпапки' : 'уже есть') : 'создать') }));
         const key = f.tm + '|' + f.collection; const parent = choice[key] || f.parent;
         if (f.state === 'no_root') part2.append(el('div', { class: 'warnline', text: 'Папка каталога не указана в Настройках — папки создавать не буду.' }));
         else if (f.state === 'unreachable') part2.append(el('div', { class: 'warnline', text: 'Сетевая папка сейчас недоступна: ' + f.root }));
         else {
           const live = plan.status === 'pending';
           part2.append(el('div', { class: 'path', text: `${f.root}\\${parent || '…'}\\${f.collection}` }),
-            el('div', { class: 'note' }, 'и внутри: ' + f.subs.join(', ') + (f.why && !choice[key] ? ` · ${f.why}` : ''),
-              live && parent && !pick[key] && el('button', { class: 'link', text: 'Другая папка', onclick: () => { pick[key] = true; draw(); } })));
+            el('div', { class: 'note' }, (f.exists ? (f.missing.length ? 'не хватает: ' + f.missing.join(', ') : 'папка коллекции уже существует, все подпапки на месте — ничего создавать не буду') : 'и внутри: ' + f.subs.join(', ') + (f.why && !choice[key] ? ` · ${f.why}` : '')),
+              live && parent && !pick[key] && !f.exists && el('button', { class: 'link', text: 'Другая папка', onclick: () => { pick[key] = true; draw(); } })));
           if (!parent || pick[key]) {
             if (!parent) part2.append(el('div', { class: 'note', text: 'Не знаю, в какую папку положить. Выберите:' }));
             const chips = el('div', { class: 'chips' });
@@ -112,6 +112,13 @@ function messageNode(m) {
     node.append(box);
   }
   if (m.plan) node.append(planCard(m.plan));
+  if (m.card) {
+    const c = m.card; const box = el('div', { class: 'card plan' }, el('h3', { text: c.title }));
+    if (c.rows.length) { const kv = el('dl', { class: 'kv' }); for (const r of c.rows) kv.append(el('dt', { text: r.label }), el('dd', { text: r.value })); box.append(kv); }
+    if (c.note) box.append(el('div', { class: 'note', text: c.note }));
+    if (c.folder) box.append(el('div', { class: 'note' }, el('span', { class: 'path', text: c.folder }), c.open && el('button', { class: 'link', text: 'Открыть папку', onclick: () => api.open(c.open) })));
+    node.append(box);
+  }
   if (m.results) {
     const box = el('div', { class: 'card results' });
     for (const r of m.results) {

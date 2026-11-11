@@ -4,6 +4,7 @@
 const sheet = require('./sheet');
 const source = require('./source');
 const folders = require('./folders');
+const path = require('path');
 const { understand } = require('./parse');
 
 const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'status', 'year', 'comment'];
@@ -33,6 +34,9 @@ class TileChat {
         if (text.split(/\s+/).length <= 3) return [this.msg('Не нашёл такого варианта. Выберите кнопкой ниже или напишите «отмена».', { options: this.awaiting.options || [] })];
         this.awaiting = null; this.draft = null; // человек написал другое — начинаем заново
       }
+      if (/^(привет\p{L}*|здравствуй\p{L}*|добр\p{L}+ (день|утро|вечер)|доброго дня|в[іи]таю|хай|hello|hi)[\s!.,)]*$/iu.test(text)) return [this.msg('Здравствуйте! Напишите, что сделать: добавить артикул или коллекцию, создать папки, дополнить данные, показать, что есть по артикулу, или записать задачу. Примеры — по слову «помощь».')];
+      if (/^(спасибо|благодарю|дякую|спс|ок|окей|хорошо|понял|ясно|добре|зрозум[іи]ло)[\s!.,)]*$/iu.test(text)) return [this.msg('Пожалуйста. Если что-то нужно — пишите.')];
+      if (!source.configured(this.store)) return [this.msg('Сначала укажите в Настройках, где лежат характеристики: Excel-файл или Google Таблица.', { kind: 'warn' })];
       const model = await source.load(this.store);
       let u; let note = '';
       const ai = this.ai && this.ai.ready() ? (s, t) => this.ai.json(s, t) : null;
@@ -44,6 +48,11 @@ class TileChat {
         const t = this.tasks.add(u.task || text);
         return [this.msg(`Записал в задачи: «${t.text}»`, { refresh: 'tasks' })];
       }
+      // «ON099» или «что по ON099?» без новых значений — это вопрос, а не правка
+      const bare = (p) => Object.keys(p).every((k) => k === 'article' || k === 'collection');
+      if (u.intent === 'update' && u.products.length && u.products.every((p) => p.article && bare(p))) u.intent = 'info';
+      if (u.intent === 'info') return this.info(model, u.products, text);
+      if (u.intent === 'chat' && u.reply) return [this.msg(u.reply)];
       if (u.intent === 'add' || u.intent === 'update') {
         let products = u.products.length ? u.products : [{}];
         let mode = u.intent;
@@ -66,7 +75,7 @@ class TileChat {
 
   unknown(text, say) {
     this.journal.add('not_understood', text, { ai: !!(this.ai && this.ai.ready()) });
-    return [this.msg((say || 'Эту команду я пока не умею выполнять.') + ' Записал в журнал разработчику — её добавят в обновлении.\n\nСейчас умею: добавить коллекцию или артикул, дополнить данные артикула, записать задачу. Напишите «помощь» для примеров.')];
+    return [this.msg((say || 'Эту команду я пока не умею выполнять.') + ' Записал в журнал разработчику — её добавят в обновлении.\n\nСейчас умею: добавить коллекцию или артикул, создать папки коллекции, дополнить данные артикула, показать, что есть по артикулу или коллекции, записать задачу. Напишите «помощь» для примеров.')];
   }
 
   applyAnswer(text) {
@@ -118,6 +127,14 @@ class TileChat {
       if (!p.article) {
         if (d.foldersOnly === undefined && /папк|пуст\p{L}*\s|без\s+артикул|(только|просто)\s+кол+е[кц]/iu.test(d.source + ' ')) d.foldersOnly = true;
         if (d.foldersOnly) return this.planFolders(model, d);
+        let pre = '';
+        const known = p.collection && model.collections.get(sheet.norm(p.collection));
+        if (known) {
+          const n = model.rows.filter((r) => sheet.norm(r.collection) === sheet.norm(p.collection)).length;
+          const dir = this.whereFolder(known.name);
+          pre = `Коллекция ${known.name} уже есть в характеристиках (артикулов — ${n})` + (dir ? `, папка тоже есть: ${dir}` : '') + '. ';
+          return this.ask(pre + 'Какой артикул добавить в неё?', 'article', p, { free: true, options: ['Без артикула — только папки'] });
+        }
         return this.ask('Какой артикул? Если артикула пока нет — создам только папки коллекции.', 'article', p, { free: true, options: ['Без артикула — только папки'] });
       }
       if (model.byArticle.has(p.article.toLowerCase())) {
@@ -161,15 +178,62 @@ class TileChat {
     return [this.msg((d.note || '') + (n === 1 ? `Понял. Вот что сделаю для ${plan.raw[0].article}:` : `Понял, артикулов: ${n}. Вот что сделаю:`), { plan })];
   }
 
+  /** Где лежит папка коллекции (если каталог доступен) */
+  whereFolder(collection) {
+    const root = this.store.get('catalogRoot'); const tops = folders.brands(root);
+    if (!root || !tops) return null;
+    const ex = folders.findCollection(root, tops, safeName(collection));
+    return ex ? path.join(root, ex.parent, ex.name) : '';
+  }
+
+  /** Ответ на вопрос: что есть по артикулу или коллекции. Ничего не меняет. */
+  info(model, products, text) {
+    const out = [];
+    for (const p of products) {
+      if (p.article) {
+        const rec = model.byArticle.get(p.article.toLowerCase());
+        if (!rec) {
+          const head = p.article.toLowerCase().slice(0, 3);
+          const near = model.rows.filter((r) => r.article.toLowerCase().startsWith(head)).slice(0, 8).map((r) => r.article);
+          out.push(this.msg(`Артикула ${p.article} в характеристиках нет.` + (near.length ? ` Похожие: ${near.join(', ')}.` : '')));
+          continue;
+        }
+        const rows = []; const empty = [];
+        for (const k of ORDER.concat(['colorGroup'])) {
+          if (k === 'article' || !model.cols[k]) continue;
+          if (rec[k]) rows.push({ label: this.label(model, k), value: rec[k] }); else if (WANTED.includes(k)) empty.push(this.label(model, k));
+        }
+        const dir = rec.collection ? this.whereFolder(rec.collection) : null;
+        out.push(this.msg(`Вот что есть по ${rec.article}:`, { card: { title: `${rec.article} · строка ${rec.row}`, rows, note: empty.length ? 'Не заполнено: ' + empty.join(', ') : 'Все основные поля заполнены.', folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
+      } else if (p.collection) {
+        const key = sheet.norm(p.collection);
+        const list = model.rows.filter((r) => sheet.norm(r.collection) === key);
+        const dir = this.whereFolder(p.collection);
+        if (!list.length) { out.push(this.msg(`Коллекции ${p.collection} в характеристиках нет.` + (dir ? ` Но папка в каталоге есть: ${dir}` : ''), dir ? { card: { title: p.collection, rows: [], note: '', folder: dir, open: dir } } : {})); continue; }
+        const rows = list.slice(0, 60).map((r) => ({ label: r.article, value: [r.color, r.format, r.surface, r.decor, r.status && !/^актив/i.test(r.status) ? r.status : ''].filter(Boolean).join(' · ') }));
+        out.push(this.msg(`Коллекция ${list[0].collection}: артикулов — ${list.length}.`, { card: { title: `${list[0].collection} · ${[...new Set(list.map((r) => r.tm))].join(', ')}`, rows, note: list.length > 60 ? `Показаны первые 60 из ${list.length}.` : '', folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
+      }
+    }
+    return out.length ? out : this.unknown(text, 'Не понял, про какой артикул или коллекцию вопрос.');
+  }
+
   /** Только папки коллекции, без строки в характеристиках */
   planFolders(model, d) {
     const p = d.products.find((x) => x.collection) || d.products[0];
     if (!p.collection) return this.ask('Как называется коллекция?', 'collection', p, { free: true, all: true });
     const known = model.collections.get(sheet.norm(p.collection));
     if (known) { p.collection = known.name; if (!p.tm) { const tm = Object.entries(known.tm).sort((a, b) => b[1] - a[1])[0]; if (tm) p.tm = tm[0]; } }
-    const plan = { id: uid(), mode: 'folders', status: 'pending', warnings: [], products: [], raw: [], target: source.title(this.store), folders: this.folderPlan([p]) };
+    const fp = this.folderPlan([p]);
+    // папка уже есть и в ней всё на месте — создавать нечего, так и говорим
+    if (fp.length && fp.every((f) => f.exists && !f.missing.length)) {
+      this.draft = null; this.awaiting = null;
+      const dir = path.join(fp[0].root, fp[0].parent, fp[0].collection);
+      return [this.msg(`Папка коллекции ${fp[0].collection} уже существует, все три подпапки на месте — создавать нечего.`, { card: { title: fp[0].collection, rows: [], note: '', folder: dir, open: dir } })];
+    }
+    const some = fp.some((f) => f.exists);
+    const plan = { id: uid(), mode: 'folders', status: 'pending', warnings: [], products: [], raw: [], target: source.title(this.store), folders: fp };
     this.plans.set(plan.id, plan); this.draft = null; this.awaiting = null;
-    return [this.msg(`Понял. Создам только папки коллекции ${p.collection} — в характеристики ничего не добавляю:`, { plan })];
+    return [this.msg(some ? `Папка коллекции ${p.collection} уже существует, но в ней не хватает подпапок. Досоздам недостающие:` : `Понял. Создам только папки коллекции ${p.collection} — в характеристики ничего не добавляю:`, { plan })];
   }
 
   view(model, p) {
@@ -193,7 +257,7 @@ class TileChat {
       else if (!tops) f.state = 'unreachable';
       else {
         const ex = folders.findCollection(root, tops, g.collection);
-        if (ex) { f.parent = ex.parent; f.collection = ex.name; f.why = 'папка коллекции уже есть'; } else {
+        if (ex) { f.parent = ex.parent; f.collection = ex.name; f.why = 'папка коллекции уже есть'; f.exists = true; f.missing = folders.missingSubs(root, ex.parent, ex.name); } else {
           const d = folders.defaultParent(tops, g, new Date().getFullYear());
           if (d) { f.parent = d.parent; f.why = d.why; } else f.state = 'need_parent';
         }

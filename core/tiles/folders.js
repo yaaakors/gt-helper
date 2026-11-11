@@ -53,6 +53,11 @@ function collectionPaths(root, brand, collection) {
   const base = path.join(root, brand, collection);
   return { base, subs: SUBDIRS.map((s) => path.join(base, s)) };
 }
+/** Каких стандартных подпапок не хватает в существующей папке коллекции */
+function missingSubs(root, parent, collection) {
+  const have = (dirs(path.join(root, parent, collection)) || []).map((n) => n.toLowerCase());
+  return SUBDIRS.filter((x) => !have.includes(x.toLowerCase()));
+}
 /** Создать папку коллекции и стандартные подпапки. Возвращает, что создано и что уже было. */
 function ensureCollection(root, brand, collection) {
   const { base, subs } = collectionPaths(root, brand, collection);
@@ -66,4 +71,4 @@ function ensureCollection(root, brand, collection) {
   }
   return { base, created, existed };
 }
-module.exports = { brands, matchBrand, findCollection, defaultParent, collectionPaths, ensureCollection, SUBDIRS };
+module.exports = { brands, matchBrand, findCollection, missingSubs, defaultParent, collectionPaths, ensureCollection, SUBDIRS };

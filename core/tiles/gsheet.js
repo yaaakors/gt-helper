@@ -27,9 +27,9 @@ async function call(cfg, payload) {
 }
 
 let cache = null;
-/** Прочитать таблицу. Повторные чтения в течение 20 секунд берутся из памяти. */
+/** Прочитать таблицу. Повторные чтения в течение 2 минут (перед записью таблица всегда читается заново) берутся из памяти. */
 async function load(cfg, fresh) {
-  if (!fresh && cache && cache.url === cfg.url && cache.token === cfg.token && Date.now() - cache.at < 20000) return cache.model;
+  if (!fresh && cache && cache.url === cfg.url && cache.token === cfg.token && Date.now() - cache.at < 120000) return cache.model;
   const d = await call(cfg, { action: 'read' });
   const model = modelFromGrid(d.values, d.colors, { sheetName: d.sheet, title: 'Google Таблица', docName: d.name, scriptVersion: d.version, grid: d.values });
   cache = { url: cfg.url, token: cfg.token, at: Date.now(), model };
