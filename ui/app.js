@@ -41,7 +41,8 @@ function planCard(plan) {
   const choice = {}; const pick = {}; // выбор папки: куда класть коллекцию
   const draw = () => {
     card.textContent = '';
-    if (plan.mode === 'add') {
+    if (plan.mode !== 'update') {
+      if (plan.products.length) {
       const part = el('div', { class: 'part' }, el('h3', { text: (plan.target || 'Файл характеристик') + ' — добавить' }));
       for (const p of plan.products) {
         const kv = el('dl', { class: 'kv' });
@@ -50,6 +51,7 @@ function planCard(plan) {
         if (p.empty.length) part.append(el('div', { class: 'note', text: 'Останется пустым: ' + p.empty.join(', ') }));
       }
       card.append(part);
+      }
       for (const f of plan.folders) {
         const part2 = el('div', { class: 'part' }, el('h3', { text: 'Папки на сети — создать' }));
         const key = f.tm + '|' + f.collection; const parent = choice[key] || f.parent;

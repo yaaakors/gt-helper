@@ -29,6 +29,7 @@ class TileChat {
         const used = this.applyAnswer(text);
         if (used) return await this.advance();
         if (/^(отмена|отмени|стоп|не надо)$/iu.test(text)) { this.awaiting = null; this.draft = null; return [this.msg('Отменил, ничего не менялось.')]; }
+        if (this.awaiting.key === 'article' && text.split(/\s+/).length <= 3) return [this.msg('Это не похоже на артикул: он пишется без пробелов и с цифрами, например FJ2580. Напишите артикул или выберите «без артикула».', { options: this.awaiting.options || [] })];
         if (text.split(/\s+/).length <= 3) return [this.msg('Не нашёл такого варианта. Выберите кнопкой ниже или напишите «отмена».', { options: this.awaiting.options || [] })];
         this.awaiting = null; this.draft = null; // человек написал другое — начинаем заново
       }
@@ -72,6 +73,13 @@ class TileChat {
     const a = this.awaiting; const low = text.toLowerCase();
     let value = null;
     if (a.options && a.options.length) value = a.options.find((o) => o.toLowerCase() === low) || null;
+    if (a.key === 'article') {
+      // «без артикула», «просто коллекцию», «нет» — значит нужны только папки
+      if (value !== null || /^(без|нет|не надо|не нужен|пока нет|не знаю|только|просто|пропус)/iu.test(low)) { this.draft.foldersOnly = true; this.awaiting = null; return true; }
+      // артикул — это код: буквы и цифры без пробелов, обязательно с цифрой
+      if (!/^[\p{L}\d]{4,8}$/u.test(text) || !/\d/.test(text)) return false;
+      value = text;
+    }
     if (value === null && a.free && text.split(/\s+/).length <= 5 && !/добав|обнов|задач/iu.test(low)) value = text;
     if (value === null) return false;
     if (a.skip && value === a.skip) value = '';
@@ -107,7 +115,11 @@ class TileChat {
   async advanceAdd(model, d, L) {
     const many = d.products.length > 1;
     for (const p of d.products) {
-      if (!p.article) return this.ask('Какой артикул?', 'article', p, { free: true });
+      if (!p.article) {
+        if (d.foldersOnly === undefined && /папк|пуст\p{L}*\s|без\s+артикул|(только|просто)\s+кол+е[кц]/iu.test(d.source + ' ')) d.foldersOnly = true;
+        if (d.foldersOnly) return this.planFolders(model, d);
+        return this.ask('Какой артикул? Если артикула пока нет — создам только папки коллекции.', 'article', p, { free: true, options: ['Без артикула — только папки'] });
+      }
       if (model.byArticle.has(p.article.toLowerCase())) {
         const ex = model.byArticle.get(p.article.toLowerCase());
         this.draft = null;
@@ -147,6 +159,17 @@ class TileChat {
     this.plans.set(plan.id, plan); this.draft = null; this.awaiting = null;
     const n = plan.products.length;
     return [this.msg((d.note || '') + (n === 1 ? `Понял. Вот что сделаю для ${plan.raw[0].article}:` : `Понял, артикулов: ${n}. Вот что сделаю:`), { plan })];
+  }
+
+  /** Только папки коллекции, без строки в характеристиках */
+  planFolders(model, d) {
+    const p = d.products.find((x) => x.collection) || d.products[0];
+    if (!p.collection) return this.ask('Как называется коллекция?', 'collection', p, { free: true, all: true });
+    const known = model.collections.get(sheet.norm(p.collection));
+    if (known) { p.collection = known.name; if (!p.tm) { const tm = Object.entries(known.tm).sort((a, b) => b[1] - a[1])[0]; if (tm) p.tm = tm[0]; } }
+    const plan = { id: uid(), mode: 'folders', status: 'pending', warnings: [], products: [], raw: [], target: source.title(this.store), folders: this.folderPlan([p]) };
+    this.plans.set(plan.id, plan); this.draft = null; this.awaiting = null;
+    return [this.msg(`Понял. Создам только папки коллекции ${p.collection} — в характеристики ничего не добавляю:`, { plan })];
   }
 
   view(model, p) {
@@ -217,7 +240,7 @@ class TileChat {
     const plan = this.plans.get(planId);
     if (!plan || !['pending', 'failed'].includes(plan.status)) return [this.msg('Этот план уже не действует. Напишите команду заново.')];
     const results = []; const backupDir = this.store.file('backups');
-    let sheetOk = plan.sheetDone === true;
+    let sheetOk = plan.sheetDone === true || plan.mode === 'folders';
     if (!sheetOk) {
       try {
         if (plan.mode === 'add') {
@@ -233,7 +256,7 @@ class TileChat {
         this.journal.add('failed', 'Запись характеристик', { error: String(e.message || e), plan: plan.raw || plan.changes });
       }
     }
-    if (sheetOk && plan.mode === 'add') {
+    if (sheetOk && plan.mode !== 'update') {
       for (const f of plan.folders) {
         if (f.done) continue;
         const chosen = (opts && opts.parents && opts.parents[f.tm + '|' + f.collection]) || f.parent;
@@ -257,7 +280,7 @@ class TileChat {
     plan.status = failed ? 'failed' : 'done';
     let tail = '';
     if (sheetOk) {
-      this.lastArticles = plan.mode === 'add' ? plan.raw.map((p) => p.article) : plan.changes.map((c) => c.article);
+      if (plan.mode !== 'folders') this.lastArticles = plan.mode === 'add' ? plan.raw.map((p) => p.article) : plan.changes.map((c) => c.article);
       if (plan.mode === 'add') {
         const empty = [...new Set(plan.products.flatMap((p) => p.empty))];
         if (empty.length) tail = `\n\nЕщё не заполнено: ${empty.join(', ')}. Когда будут данные — просто напишите их, например «PEI 4, R10», я внесу в ${this.lastArticles.join(', ')}.`;
@@ -270,6 +293,7 @@ class TileChat {
 
 const HELP = [
   'Что я умею сейчас:',
+  '• Создать только папки коллекции (без артикула):\n  «создай папку коллекции Fjord Rock»',
   '• Добавить коллекцию или артикул:\n  «Добавь коллекцию Fjord Rock, матовый рельефный керамогранит 600х600, толщина 8 мм, цвет серый, артикул FJ2580»',
   '• Дополнить или изменить данные:\n  «для FJ2580 PEI 4, R10» или сразу после добавления просто «PEI 4, R10, для пола»',
   '• Записать задачу:\n  «задача: отправить файл технологу #плитка»',
