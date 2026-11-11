@@ -129,9 +129,6 @@ input:focus, textarea:focus { border-color: var(--gold-d); }
 .item:hover .x, .item .x:focus-visible { opacity: 1; }
 .item.done .t { color: var(--muted); }
 .item input[type=text] { flex: 1; }
-.check { flex: none; width: 18px; height: 18px; margin-top: 2px; border: 1px solid var(--field); border-radius: 4px; background: var(--card); padding: 0; position: relative; }
-.check.on::after { content: ""; position: absolute; left: 5px; top: 1px; width: 5px; height: 10px; border: solid var(--ok); border-width: 0 2px 2px 0; transform: rotate(45deg); }
-.section-toggle { background: none; border: 0; padding: 4px; margin: 24px 0 4px; color: var(--muted); font-size: 12px; letter-spacing: .6px; text-transform: uppercase; }
 .empty { color: var(--muted); padding: 16px 4px; }
 .day { margin: 16px 0 4px; color: var(--muted); font-size: 12px; letter-spacing: .6px; text-transform: uppercase; }
 .j .kind { flex: none; width: 150px; color: var(--muted); }
@@ -162,3 +159,20 @@ html.boot body { visibility: hidden; }
 
 .form .steps { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .form .seg { margin-bottom: 0; }
+
+/* задачи: номер, перетаскивание, поле «Выполненные» */
+.task { cursor: grab; align-items: baseline; border-top: 2px solid transparent; border-bottom: 1px solid var(--line); margin-top: -2px; }
+.task .num { flex: none; min-width: 24px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.task.drag { opacity: .4; }
+.task.drop-before { border-top-color: var(--gold); }
+.task.drop-after { border-bottom: 2px solid var(--gold); padding-bottom: 8px; }
+#task-list { min-height: 80px; padding-bottom: 24px; }
+.done-box { width: 100%; max-width: 764px; flex: none; padding: 0 32px 24px; display: flex; flex-direction: column; }
+.done-box .list { max-height: 34vh; overflow: auto; border-top: 1px solid var(--line); margin-bottom: 8px; }
+.done-zone { display: flex; align-items: baseline; gap: 12px; width: 100%; text-align: left; background: var(--card); border: 1px dashed var(--field); border-radius: 12px; padding: 14px 16px; }
+.done-zone:hover, .done-zone.open { border-style: solid; }
+.done-zone .cap { font-weight: 500; }
+.done-zone .tip { color: var(--faint); font-size: 13px; }
+body.dragging .done-zone { border-color: var(--gold-d); }
+.done-zone.over { border-style: solid; border-color: var(--gold); background: var(--tone); }
+.done-zone * { pointer-events: none; }

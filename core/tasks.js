@@ -14,13 +14,25 @@ class Tasks {
     if (!text) return null;
     const d = this._load();
     const t = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5), text, tags: tagsOf(text), created: new Date().toISOString(), done: null };
-    d.tasks.unshift(t); this._save(d);
+    d.tasks.push(t); this._save(d); // новая — в конец списка, порядок = приоритет
     return t;
   }
   toggle(id) {
     const d = this._load(); const t = d.tasks.find((x) => x.id === id);
     if (!t) return null;
     t.done = t.done ? null : new Date().toISOString();
+    if (!t.done) { d.tasks.splice(d.tasks.indexOf(t), 1); d.tasks.push(t); } // вернули в работу — в конец списка
+    this._save(d); return t;
+  }
+  /** Переставить задачу перед другой (beforeId) или в конец. Выполненная при этом возвращается в работу. */
+  move(id, beforeId) {
+    const d = this._load(); const i = d.tasks.findIndex((x) => x.id === id);
+    if (i < 0 || id === beforeId) return null;
+    const [t] = d.tasks.splice(i, 1);
+    t.done = null;
+    let j = beforeId ? d.tasks.findIndex((x) => x.id === beforeId) : -1;
+    if (j < 0) j = d.tasks.length;
+    d.tasks.splice(j, 0, t);
     this._save(d); return t;
   }
   edit(id, text) {

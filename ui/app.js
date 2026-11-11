@@ -185,31 +185,51 @@ function taskText(text) {
   span.append(text.slice(last));
   return span;
 }
-function taskRow(t) {
-  const row = el('div', { class: 'item' + (t.done ? ' done' : '') });
-  const check = el('button', { class: 'check' + (t.done ? ' on' : ''), title: t.done ? 'Вернуть в работу' : 'Выполнено', onclick: async () => { await api.tasks.toggle(t.id); renderTasks(); } });
+let dragId = null;
+let activeIds = [];
+const clearMarks = () => document.querySelectorAll('.drop-before, .drop-after, .over').forEach((n) => n.classList.remove('drop-before', 'drop-after', 'over'));
+function taskRow(t, n) {
+  const row = el('div', { class: 'item task' + (t.done ? ' done' : ''), draggable: 'true' });
   const text = taskText(t.text);
-  const edit = () => {
+  text.addEventListener('dblclick', () => {
     const inp = el('input', { type: 'text', value: t.text });
     const save = async () => { const v = inp.value.trim(); if (v && v !== t.text) await api.tasks.edit(t.id, v); renderTasks(); };
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') renderTasks(); });
     inp.addEventListener('blur', save);
-    text.replaceWith(inp); inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
-  };
-  text.addEventListener('dblclick', edit);
-  text.title = 'Двойной щелчок — изменить';
+    row.draggable = false; text.replaceWith(inp); inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
+  });
+  text.title = 'Перетащите, чтобы изменить порядок. Двойной щелчок — изменить текст';
   const del = el('button', { class: 'link danger x', text: 'Удалить', onclick: () => {
     del.replaceWith(el('span', {}, el('button', { class: 'link danger', text: 'Да, удалить', onclick: async () => { await api.tasks.remove(t.id); renderTasks(); } }), el('button', { class: 'link', text: 'Нет', onclick: renderTasks })));
   } });
-  row.append(check, text);
-  if (t.done) row.append(el('span', { class: 'date', text: dmy(t.done) }));
-  row.append(del);
+  if (t.done) row.append(el('span', { class: 'date', text: dmy(t.done) }), text, el('button', { class: 'link x', text: 'Вернуть', onclick: async () => { await api.tasks.toggle(t.id); renderTasks(); } }), del);
+  else row.append(el('span', { class: 'num', text: n + '.' }), text, del);
+  // перетаскивание: порядок = приоритет
+  row.addEventListener('dragstart', (e) => { dragId = t.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', t.id); row.classList.add('drag'); document.body.classList.add('dragging'); });
+  row.addEventListener('dragend', () => { dragId = null; clearMarks(); row.classList.remove('drag'); document.body.classList.remove('dragging'); });
+  if (!t.done) {
+    row.addEventListener('dragover', (e) => {
+      if (!dragId || dragId === t.id) return;
+      e.preventDefault(); e.stopPropagation();
+      const r = row.getBoundingClientRect(); const after = e.clientY > r.top + r.height / 2;
+      clearMarks(); row.classList.add(after ? 'drop-after' : 'drop-before');
+    });
+    row.addEventListener('drop', async (e) => {
+      if (!dragId) return;
+      e.preventDefault(); e.stopPropagation();
+      const rest = activeIds.filter((x) => x !== dragId); // «после» = перед следующей по общему порядку
+      const before = row.classList.contains('drop-after') ? (rest[rest.indexOf(t.id) + 1] || null) : t.id;
+      const id = dragId; clearMarks();
+      await api.tasks.move(id, before); renderTasks();
+    });
+  }
   return row;
 }
 async function countTasks() { const n = (await api.tasks.list()).filter((t) => !t.done).length; $('#tasks-count').textContent = n || ''; }
 async function renderTasks() {
   const all = await api.tasks.list();
   const active = all.filter((t) => !t.done); const done = all.filter((t) => t.done).sort((a, b) => (a.done < b.done ? 1 : -1));
+  activeIds = active.map((t) => t.id);
   $('#tasks-count').textContent = active.length || '';
   const tags = [...new Set(all.flatMap((t) => t.tags))].sort();
   if (!tags.includes(taskTag)) taskTag = '';
@@ -219,14 +239,26 @@ async function renderTasks() {
   const list = $('#task-list'); list.textContent = '';
   const a = active.filter(f);
   if (!a.length) list.append(el('div', { class: 'empty', text: active.length ? 'С этим тегом задач в работе нет.' : 'Задач нет. Напишите первую в поле выше и нажмите Enter.' }));
-  for (const t of a) list.append(taskRow(t));
+  for (const t of a) list.append(taskRow(t, activeIds.indexOf(t.id) + 1));
   const d = done.filter(f);
-  const toggle = $('#done-toggle'); toggle.hidden = !d.length;
-  toggle.textContent = `${doneOpen ? '▾' : '▸'} Выполненные · ${d.length}`;
-  const dl = $('#done-list'); dl.hidden = !doneOpen || !d.length; dl.textContent = '';
-  if (doneOpen) for (const t of d) dl.append(taskRow(t));
+  const zone = $('#done-zone'); zone.textContent = '';
+  zone.append(el('span', { class: 'cap', text: `${doneOpen ? '▾' : '▸'} Выполненные · ${d.length}` }), el('span', { class: 'tip', text: 'перетащите сюда сделанную задачу' }));
+  zone.classList.toggle('open', doneOpen);
+  const dl = $('#done-list'); dl.hidden = !doneOpen; dl.textContent = '';
+  if (doneOpen) { if (!d.length) dl.append(el('div', { class: 'empty', text: 'Выполненных задач пока нет.' })); for (const t of d) dl.append(taskRow(t)); }
 }
-$('#done-toggle').addEventListener('click', () => { doneOpen = !doneOpen; renderTasks(); });
+{
+  const zone = $('#done-zone'); const list = $('#task-list');
+  zone.addEventListener('click', () => { doneOpen = !doneOpen; renderTasks(); });
+  // задачу бросили на поле «Выполненные»
+  zone.addEventListener('dragover', (e) => { if (!dragId || !activeIds.includes(dragId)) return; e.preventDefault(); clearMarks(); zone.classList.add('over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+  zone.addEventListener('drop', async (e) => { if (!dragId || !activeIds.includes(dragId)) return; e.preventDefault(); const id = dragId; clearMarks(); await api.tasks.toggle(id); renderTasks(); });
+  // задачу бросили на свободное место списка — в конец (выполненная при этом возвращается в работу)
+  list.addEventListener('dragover', (e) => { if (!dragId) return; e.preventDefault(); clearMarks(); list.classList.add('over'); });
+  list.addEventListener('dragleave', (e) => { if (e.target === list) list.classList.remove('over'); });
+  list.addEventListener('drop', async (e) => { if (!dragId) return; e.preventDefault(); const id = dragId; clearMarks(); await api.tasks.move(id, null); renderTasks(); });
+}
 $('#task-form').addEventListener('submit', async (e) => { e.preventDefault(); const i = $('#task-input'); if (!i.value.trim()) return; await api.tasks.add(i.value); i.value = ''; renderTasks(); });
 
 // ---------- отчёт ----------

@@ -111,6 +111,7 @@ function handlers() {
   h('tasks:list', () => tasks.list());
   h('tasks:add', (text) => tasks.add(text));
   h('tasks:toggle', (id) => tasks.toggle(id));
+  h('tasks:move', (id, beforeId) => tasks.move(id, beforeId));
   h('tasks:edit', (id, text) => tasks.edit(id, text));
   h('tasks:remove', (id) => tasks.remove(id));
   h('tasks:report', (filter) => tasks.report(filter));
