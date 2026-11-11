@@ -1,9 +1,10 @@
 # Сборка установщика и публикация обновления.
-# Запускается, когда в репозиторий приходит метка версии (v0.1.1 и т.п.).
+# Запускается при каждом изменении в main. Если версия из package.json уже выпущена — ничего не делает.
 name: release
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
 jobs:
   build:
     runs-on: windows-latest
@@ -14,7 +15,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
-      - run: npx electron-builder --win nsis --publish always
+      - name: Версия уже выпущена?
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v=$(node -p "require('./package.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.check.outputs.exists == 'false'
+        run: npm ci
+      - if: steps.check.outputs.exists == 'false'
+        run: npx electron-builder --win nsis --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

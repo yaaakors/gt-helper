@@ -42,4 +42,4 @@
 - core/tiles: sheet.js (Excel), parse.js (разбор текста: скрипт + ИИ), scenario.js (разговор, план, выполнение), folders.js (папки)
 - core/ai/gemini.js — сменная часть: другой ИИ = такой же файл с функциями check и json
 - Правило: ИИ только понимает текст; файлы и папки меняет код, только после «Выполнить», результат проверяется
-- Выпуск версии: поднять version в package.json → метка vX.Y.Z → GitHub Actions собирает установщик и публикует (.github/workflows/release.yml)
+- Выпуск версии: поднять version в package.json и отправить в main → GitHub Actions сам собирает установщик и публикует выпуск vX.Y.Z (.github/workflows/release.yml). Метки из сессии Claude отправить нельзя — их создаёт сама сборка
