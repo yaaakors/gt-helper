@@ -27,6 +27,13 @@ jobs:
       - if: steps.check.outputs.exists == 'false'
         run: npm ci
       - if: steps.check.outputs.exists == 'false'
-        run: npx electron-builder --win nsis --publish always
+        run: npx electron-builder --win nsis --publish never
+      - name: Опубликовать выпуск
+        if: steps.check.outputs.exists == 'false'
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="${{ steps.check.outputs.version }}"
+          ls dist
+          gh release create "v$v" dist/latest.yml dist/*.exe dist/*.exe.blockmap -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "GT Помощник $v" --notes "Установщик: GT-Helper-Setup-$v.exe"
