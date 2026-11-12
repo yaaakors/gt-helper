@@ -327,7 +327,7 @@ function applyLook(look) {
 
 // ---------- настройки ----------
 let updateState = { state: 'idle' }; let appVersion = '';
-function flashSaved() { const s = $('#saved'); s.hidden = false; clearTimeout(flashSaved.t); flashSaved.t = setTimeout(() => (s.hidden = true), 1500); }
+function flashSaved(error) { const s = $('#saved'); s.textContent = error || 'Сохранено'; s.classList.toggle('bad', !!error); s.hidden = false; clearTimeout(flashSaved.t); flashSaved.t = setTimeout(() => (s.hidden = true), error ? 15000 : 1500); }
 // Проверки связи (таблица, сетевая папка) идут отдельно от показа настроек — они медленные.
 const WAIT = { ok: null, text: 'проверяю…' };
 let lastStatus = null; let statusRun = 0;
@@ -350,7 +350,7 @@ async function renderSettings(data, recheck = true) {
   const st = lastStatus;
   applyLook(look);
   const box = $('#settings'); box.textContent = '';
-  const save = async (patch) => { const d = await api.settings.set(patch); flashSaved(); const again = Object.keys(patch).some((k) => STATUS_KEYS.includes(k)); if (again) lastStatus = null; renderSettings(d, again); };
+  const save = async (patch) => { const d = await api.settings.set(patch); if (d.error) flashSaved(d.error); else flashSaved(); const again = Object.keys(patch).some((k) => STATUS_KEYS.includes(k)); if (again) lastStatus = null; renderSettings(d, again); };
   const pathField = (key, label, state, hint, btn) => {
     const inp = el('input', { type: 'text', class: 'grow', value: s[key] || '', spellcheck: 'false' });
     inp.addEventListener('change', () => save({ [key]: inp.value }));
@@ -422,7 +422,7 @@ async function renderSettings(data, recheck = true) {
       look.changed.length ? el('div', { class: 'hint' }, el('button', { class: 'link', text: 'Вернуть цвета темы', onclick: () => save({ colors: {} }) })) : null)));
 
   box.append(el('div', { class: 'group' }, el('div', { class: 'cap', text: 'Данные программы' }),
-    pathField('dataDir', 'Папка данных', null, 'Здесь лежат задачи, журнал разработчику, переписка и копии файла. Сейчас: ' + s.dataDirActual)));
+    pathField('dataDir', 'Папка данных', null, 'Здесь лежат задачи, журнал разработчику, переписка и копии файла. При смене папки данные переносятся сами. Папку программы выбирать нельзя — она стирается при обновлении. Сейчас: ' + s.dataDirActual)));
 
   const u = updateState; const map = { dev: 'запущено из исходников — обновления выключены', idle: '', checking: 'проверяю…', latest: 'у вас последняя версия', available: 'доступна версия ' + u.version, downloading: `загружаю… ${u.percent || 0}%`, ready: `версия ${u.version} загружена — перезапустите для установки`, error: 'проверить не получилось: ' + (u.error || '') };
   box.append(el('div', { class: 'group' }, el('div', { class: 'cap', text: 'Обновления' }),

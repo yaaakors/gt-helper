@@ -80,6 +80,16 @@ async function status() {
   return out;
 }
 
+// ---------- папка данных ----------
+// Папку программы установщик стирает при каждом обновлении — данные в ней хранить нельзя.
+const installDir = () => path.dirname(process.execPath);
+function inside(dir, parent) { const r = path.relative(path.resolve(parent), path.resolve(dir)); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); }
+const unsafeDataDir = (dir) => !!dir && app.isPackaged && inside(dir, installDir());
+/** Скопировать данные в новую папку, ничего не затирая */
+function copyData(from, to) {
+  try { if (from && fs.existsSync(from) && path.resolve(from) !== path.resolve(to)) fs.cpSync(from, to, { recursive: true, force: false, errorOnExist: false }); return true; } catch { return false; }
+}
+
 // ---------- оформление ----------
 const look = () => themes.describe(store.get('theme'), store.get('colors'));
 function applyLook() {
@@ -129,7 +139,20 @@ function handlers() {
 
   h('settings:get', () => ({ settings: store.publicSettings(), look: look() })); // сразу, без проверок
   h('settings:status', () => status());                                               // проверки связи — отдельно, они медленные
-  h('settings:set', (patch) => { store.set(patch); if ('theme' in patch || 'colors' in patch) applyLook(); return { settings: store.publicSettings(), look: look() }; });
+  h('settings:set', (patch) => {
+    let error = '';
+    if ('dataDir' in patch) {
+      const next = String(patch.dataDir || '').trim();
+      if (unsafeDataDir(next)) { error = 'Эту папку выбрать нельзя: она внутри папки программы, а её установщик стирает при каждом обновлении. Выберите другую, например в «Документах».'; delete patch.dataDir; } else {
+        const old = store.dataDir; store.set({ dataDir: next });
+        if (!copyData(old, store.dataDir)) error = 'Папку поменял, но перенести в неё данные не получилось — скопируйте файлы вручную из ' + old;
+        delete patch.dataDir;
+      }
+    }
+    store.set(patch);
+    if ('theme' in patch || 'colors' in patch) applyLook();
+    return { settings: store.publicSettings(), look: look(), error };
+  });
   h('settings:clearKey', () => { store.clearKey(); return { settings: store.publicSettings(), look: look() }; });
   h('settings:pick', async (kind) => {
     const opt = kind === 'sheetPath'
@@ -177,6 +200,9 @@ function createWindow() {
 
 app.whenReady().then(() => {
   store = new Store(app.getPath('userData'), crypt);
+  if (unsafeDataDir(store.get('dataDir'))) { // старая ошибка: данные внутри папки программы — уводим в безопасное место
+    const old = store.get('dataDir'); store.set({ dataDir: '' }); copyData(old, store.dataDir);
+  }
   journal = new Journal(store, app.getVersion());
   tasks = new Tasks(store);
   chat = new TileChat({ store, journal, tasks, ai });

@@ -144,6 +144,7 @@ input:focus, textarea:focus { border-color: var(--gold-d); }
 .form .hint { grid-column: 2; font-size: 13px; color: var(--muted); }
 .form .hint.ok { color: var(--ok); } .form .hint.bad { color: var(--bad); }
 .saved { color: var(--ok); font-size: 13px; }
+.saved.bad { color: var(--bad); }
 
 /* оформление в настройках */
 html.boot body { visibility: hidden; }
