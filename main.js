@@ -51,7 +51,8 @@ function setupUpdater() {
   if (!app.isPackaged) { update = { state: 'dev' }; return; }
   try {
     updater = require('electron-updater').autoUpdater;
-    updater.autoDownload = false; updater.autoInstallOnAppQuit = true;
+    updater.autoDownload = true;           // новая версия скачивается сама, в фоне
+    updater.autoInstallOnAppQuit = true;   // и ставится при закрытии программы, если не нажали «Перезапустить»
     updater.on('checking-for-update', () => sendUpdate({ state: 'checking', error: '' }));
     updater.on('update-available', (i) => sendUpdate({ state: 'available', version: i.version }));
     updater.on('update-not-available', () => sendUpdate({ state: 'latest', checked: new Date().toISOString() }));
@@ -199,7 +200,7 @@ function handlers() {
 
   h('update:check', async () => { if (updater) await updater.checkForUpdates().catch(() => {}); return update; });
   h('update:download', async () => { if (updater) updater.downloadUpdate().catch(() => {}); return true; });
-  h('update:install', () => { if (updater) setImmediate(() => updater.quitAndInstall(false, true)); return true; });
+  h('update:install', () => { if (updater) setImmediate(() => updater.quitAndInstall(true, true) /* тихо, без окна установщика, и сразу открыть программу снова */); return true; });
 }
 
 function createWindow() {

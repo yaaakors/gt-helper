@@ -499,9 +499,9 @@ async function renderSettings(data, recheck = true) {
 function renderUpdate(u) {
   updateState = u; const box = $('#update-box'); box.textContent = '';
   box.hidden = !['available', 'downloading', 'ready'].includes(u.state);
-  if (u.state === 'available') box.append(el('b', { text: 'Новая версия ' + u.version }), el('button', { text: 'Обновить', onclick: () => api.update.download() }));
+  if (u.state === 'available') box.append(el('b', { text: 'Новая версия ' + u.version }), 'загружаю…');
   if (u.state === 'downloading') box.append(el('b', { text: 'Загружаю обновление' }), `${u.percent || 0}%`, el('div', { class: 'bar' }, el('i', { style: `width:${u.percent || 0}%` })));
-  if (u.state === 'ready') box.append(el('b', { text: 'Обновление готово' }), el('button', { text: 'Перезапустить', onclick: () => api.update.install() }));
+  if (u.state === 'ready') box.append(el('b', { text: 'Версия ' + u.version + ' готова' }), el('button', { text: 'Обновить', title: 'Программа закроется и через несколько секунд откроется уже новой', onclick: (e) => { e.target.disabled = true; e.target.textContent = 'Обновляю…'; api.update.install(); } }));
   if ($('#view-settings').classList.contains('on')) renderSettings(undefined, false);
 }
 api.update.on(renderUpdate);
