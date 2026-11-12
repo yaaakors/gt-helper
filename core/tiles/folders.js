@@ -53,6 +53,64 @@ function collectionPaths(root, brand, collection) {
   const base = path.join(root, brand, collection);
   return { base, subs: SUBDIRS.map((s) => path.join(base, s)) };
 }
+// ---------- быстрый указатель папок ----------
+// Сетевая папка медленная, поэтому список папок коллекций читается один раз (не блокируя окно)
+// и держится в памяти 10 минут. Недоступная сеть не «подвешивает» программу: ждём не дольше нескольких секунд.
+const fsp = fs.promises;
+const IMG = /\.(jpe?g|png|webp)$/i;
+const withTimeout = (pr, ms) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+async function list(p, ms = 8000) { try { return await withTimeout(fsp.readdir(p, { withFileTypes: true }), ms); } catch { return null; } }
+async function adirs(p, ms) { const l = await list(p, ms); return l && l.filter((d) => d.isDirectory()).map((d) => d.name); }
+let idx = null; let building = null;
+async function build(root) {
+  const all = await adirs(root, 5000);
+  if (!all) return null;
+  const tops = all.filter((n) => !n.startsWith('.') && !n.startsWith('$') && (!n.startsWith('_') || /^_ексклюзив/i.test(n)));
+  const map = new Map(); const level1 = [];
+  const l1 = await Promise.all(tops.map((t) => adirs(path.join(root, t))));
+  tops.forEach((t, i) => { for (const n of l1[i] || []) { const e = { parent: t, name: n, subs: null }; level1.push(e); if (!map.has(squash(n))) map.set(squash(n), e); } });
+  // второй уровень (<верхняя>\<Виробник>\<Колекція>) — по 12 папок одновременно
+  let next = 0;
+  await Promise.all(Array.from({ length: 12 }, async () => {
+    while (next < level1.length) {
+      const e = level1[next++]; const kids = await adirs(path.join(root, e.parent, e.name));
+      e.subs = kids || [];
+      if (kids && !kids.some((k) => SUBDIRS.includes(k))) for (const k of kids) if (!map.has(squash(k))) map.set(squash(k), { parent: path.join(e.parent, e.name), name: k, subs: null });
+    }
+  }));
+  return { root, at: Date.now(), tops, map };
+}
+/** Указатель папок каталога. null — корень не задан или недоступен. fresh — перечитать сейчас. */
+async function index(root, fresh) {
+  if (!root) return null;
+  if (!fresh && idx && idx.root === root) {
+    if (Date.now() - idx.at > 10 * 60000 && !building) { building = build(root).then((r) => { if (r) idx = r; }).finally(() => { building = null; }); } // устарел — обновим в фоне
+    return idx;
+  }
+  if (!building) building = build(root).then((r) => { idx = r; }).finally(() => { building = null; });
+  await building;
+  return idx && idx.root === root ? idx : null;
+}
+const reset = () => { idx = null; };
+/** Папка коллекции по указателю: {parent, name, dir} или null */
+function find(ix, collection) { const e = ix && ix.map.get(squash(collection)); return e ? Object.assign({ dir: path.join(ix.root, e.parent, e.name) }, e) : null; }
+/** Картинки в папке (только сама папка, без вложенных) */
+async function images(dir) { const l = await list(dir); return (l || []).filter((d) => d.isFile() && IMG.test(d.name)).map((d) => d.name).sort((a, b) => a.localeCompare(b, 'uk', { numeric: true })); }
+/** Фото товара в корне папки коллекции: «Колекція колір формат - АРТИКУЛ.jpg» */
+async function productPhotos(dir, article) {
+  const all = await images(dir);
+  if (!article) return all;
+  const key = String(article).toLowerCase();
+  return all.filter((n) => { const stem = n.replace(IMG, '').toLowerCase().trim(); return stem.endsWith(key) && !/[\p{L}\d]/u.test(stem.slice(-key.length - 1, -key.length)); });
+}
+/** Визуализации коллекции: папка «Рендери» (и вложенные на один уровень) */
+async function renders(dir) {
+  const base = path.join(dir, SUBDIRS[1]); const out = (await images(base)).map((n) => path.join(base, n));
+  for (const sub of (await adirs(base)) || []) for (const n of await images(path.join(base, sub))) out.push(path.join(base, sub, n));
+  const main = (f) => (/(^|[\s_])main([\s_.]|$)/i.test(path.basename(f)) ? 0 : 1); // общий план («main») — первым
+  return out.sort((a, b) => main(a) - main(b));
+}
+
 /** Каких стандартных подпапок не хватает в существующей папке коллекции */
 function missingSubs(root, parent, collection) {
   const have = (dirs(path.join(root, parent, collection)) || []).map((n) => n.toLowerCase());
@@ -71,4 +129,4 @@ function ensureCollection(root, brand, collection) {
   }
   return { base, created, existed };
 }
-module.exports = { brands, matchBrand, findCollection, missingSubs, defaultParent, collectionPaths, ensureCollection, SUBDIRS };
+module.exports = { index, reset, find, images, productPhotos, renders, brands, matchBrand, findCollection, missingSubs, defaultParent, collectionPaths, ensureCollection, SUBDIRS };

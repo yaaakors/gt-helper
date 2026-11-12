@@ -9,6 +9,16 @@ const { understand, parseLocal } = require('./parse');
 const filesLib = require('./files');
 
 const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'status', 'year', 'comment'];
+// Разделы карточки артикула
+const GROUPS = [
+  ['Основное', ['tm', 'collection', 'decor', 'status', 'year']],
+  ['Назначение', ['purpose', 'usage', 'type']],
+  ['Размер', ['format', 'thickness', 'rect']],
+  ['Внешний вид', ['color', 'colorGroup', 'surface', 'relief', 'design']],
+  ['Технические', ['frost', 'pei', 'ptv', 'r']],
+  ['Упаковка', ['ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal']],
+  ['Заметки', ['comment']],
+];
 const WANTED = ['purpose', 'usage', 'type', 'format', 'thickness', 'color', 'surface', 'relief', 'design', 'pei', 'r', 'ean']; // что напомнить, если пусто
 const safeName = (s) => String(s).replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim();
 let seq = 0;
@@ -63,7 +73,8 @@ class TileChat {
       // «ON099» или «что по ON099?» без новых значений — это вопрос, а не правка
       const bare = (p) => Object.keys(p).every((k) => k === 'article' || k === 'collection');
       if (u.intent === 'update' && u.products.length && u.products.every((p) => p.article && bare(p))) u.intent = 'info';
-      if (u.intent === 'info') { const r = this.info(model, u.products, text); if (note && r[0]) r[0].text = note + r[0].text; return r; }
+      if (u.intent === 'show' && u.products.length) { const r = await this.show(model, u.products, u.what || 'photo', text); if (note && r[0]) r[0].text = note + r[0].text; return r; }
+      if (u.intent === 'info') { const r = await this.info(model, u.products, text); if (note && r[0]) r[0].text = note + r[0].text; return r; }
       if (u.intent === 'chat' && u.reply) return [this.msg(u.reply)];
       if (u.intent === 'add' || u.intent === 'update') {
         let products = u.products.length ? u.products : [{}];
@@ -87,7 +98,7 @@ class TileChat {
 
   unknown(text, say) {
     this.journal.add('not_understood', text, { ai: !!(this.ai && this.ai.ready()) });
-    return [this.msg((say || 'Эту команду я пока не умею выполнять.') + ' Записал в журнал разработчику — её добавят в обновлении.\n\nСейчас умею: добавить коллекцию или артикул, создать папки коллекции, дополнить данные артикула, показать, что есть по артикулу или коллекции, записать задачу. Напишите «помощь» для примеров.')];
+    return [this.msg((say || 'Эту команду я пока не умею выполнять.') + ' Записал в журнал разработчику — её добавят в обновлении.\n\nСейчас умею: добавить коллекцию или артикул, создать папки коллекции, дополнить данные артикула, показать данные и картинки по артикулу или коллекции, записать задачу. Напишите «помощь» для примеров.')];
   }
 
   applyAnswer(text) {
@@ -143,7 +154,7 @@ class TileChat {
         const known = p.collection && model.collections.get(sheet.norm(p.collection));
         if (known) {
           const n = model.rows.filter((r) => sheet.norm(r.collection) === sheet.norm(p.collection)).length;
-          const dir = this.whereFolder(known.name);
+          const dir = await this.whereFolder(known.name);
           pre = `Коллекция ${known.name} уже есть в характеристиках (артикулов — ${n})` + (dir ? `, папка тоже есть: ${dir}` : '') + '. ';
           return this.ask(pre + 'Какой артикул добавить в неё?', 'article', p, { free: true, options: ['Без артикула — только папки'] });
         }
@@ -183,7 +194,7 @@ class TileChat {
       products: d.products.map((p) => this.view(model, p)),
       raw: d.products.map((p) => { const c = {}; for (const k of ORDER) if (p[k]) c[k] = p[k]; return c; }),
       target: source.title(this.store),
-      folders: this.folderPlan(d.products),
+      folders: await this.folderPlan(d.products),
     };
     this.plans.set(plan.id, plan); this.draft = null; this.awaiting = null;
     const n = plan.products.length;
@@ -243,36 +254,34 @@ class TileChat {
   }
 
   /** Где лежит папка коллекции (если каталог доступен) */
-  whereFolder(collection) {
-    const root = this.store.get('catalogRoot'); const tops = folders.brands(root);
-    if (!root || !tops) return null;
-    const ex = folders.findCollection(root, tops, safeName(collection));
-    return ex ? path.join(root, ex.parent, ex.name) : '';
+  async whereFolder(collection) {
+    const ix = await folders.index(this.store.get('catalogRoot'));
+    if (!ix) return null;
+    const e = folders.find(ix, safeName(collection));
+    return e ? e.dir : '';
   }
 
   /** Ответ на вопрос: что есть по артикулу или коллекции. Ничего не меняет. */
-  info(model, products, text) {
+  async info(model, products, text) {
     const out = [];
     for (const p of products) {
       if (p.article) {
         const rec = model.byArticle.get(p.article.toLowerCase());
-        if (!rec) {
-          const head = p.article.toLowerCase().slice(0, 3);
-          const near = model.rows.filter((r) => r.article.toLowerCase().startsWith(head)).slice(0, 8).map((r) => r.article);
-          out.push(this.msg(`Артикула ${p.article} в характеристиках нет.` + (near.length ? ` Похожие: ${near.join(', ')}.` : '')));
-          continue;
+        if (!rec) { out.push(this.msg(this.noArticle(model, p.article))); continue; }
+        const sections = []; const empty = [];
+        for (const [title, keys] of GROUPS) {
+          const rows = [];
+          for (const k of keys) { if (!model.cols[k]) continue; if (rec[k]) rows.push({ label: this.label(model, k), value: rec[k] }); else if (WANTED.includes(k)) empty.push(this.label(model, k)); }
+          if (rows.length) sections.push({ title, rows });
         }
-        const rows = []; const empty = [];
-        for (const k of ORDER.concat(['colorGroup'])) {
-          if (k === 'article' || !model.cols[k]) continue;
-          if (rec[k]) rows.push({ label: this.label(model, k), value: rec[k] }); else if (WANTED.includes(k)) empty.push(this.label(model, k));
-        }
-        const dir = rec.collection ? this.whereFolder(rec.collection) : null;
-        out.push(this.msg(`Вот что есть по ${rec.article}:`, { card: { title: `${rec.article} · строка ${rec.row}`, rows, note: empty.length ? 'Не заполнено: ' + empty.join(', ') : 'Все основные поля заполнены.', folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
+        const dir = rec.collection ? await this.whereFolder(rec.collection) : null;
+        const photo = dir ? (await folders.productPhotos(dir, rec.article))[0] : '';
+        out.push(this.msg(`Вот что есть по ${rec.article}:`, { card: { title: [rec.article, rec.collection, rec.color, rec.format].filter(Boolean).join(' · '), sections, rows: [], photo: photo ? path.join(dir, photo) : '',
+          note: empty.length ? 'Не заполнено: ' + empty.join(', ') : '', folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
       } else if (p.collection) {
         const key = sheet.norm(p.collection);
         const list = model.rows.filter((r) => sheet.norm(r.collection) === key);
-        const dir = this.whereFolder(p.collection);
+        const dir = await this.whereFolder(p.collection);
         if (!list.length) { out.push(this.msg(`Коллекции ${p.collection} в характеристиках нет.` + (dir ? ` Но папка в каталоге есть: ${dir}` : ''), dir ? { card: { title: p.collection, rows: [], note: '', folder: dir, open: dir } } : {})); continue; }
         const rows = list.slice(0, 60).map((r) => ({ label: r.article, value: [r.color, r.format, r.surface, r.decor, r.status && !/^актив/i.test(r.status) ? r.status : ''].filter(Boolean).join(' · ') }));
         out.push(this.msg(`Коллекция ${list[0].collection}: артикулов — ${list.length}.`, { card: { title: `${list[0].collection} · ${[...new Set(list.map((r) => r.tm))].join(', ')}`, rows, note: list.length > 60 ? `Показаны первые 60 из ${list.length}.` : '', folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
@@ -280,14 +289,50 @@ class TileChat {
     }
     return out.length ? out : this.unknown(text, 'Не понял, про какой артикул или коллекцию вопрос.');
   }
+  noArticle(model, article) {
+    const head = article.toLowerCase().slice(0, 3);
+    const near = model.rows.filter((r) => r.article.toLowerCase().startsWith(head)).slice(0, 8).map((r) => r.article);
+    return `Артикула ${article} в характеристиках нет.` + (near.length ? ` Похожие: ${near.join(', ')}.` : '');
+  }
+
+  /** Показать картинки: фото плитки по артикулу или визуализации коллекции. Берём из папки коллекции в каталоге. */
+  async show(model, products, what, text) {
+    const out = [];
+    for (const p of products) {
+      let collection = p.collection; let rec = null;
+      if (p.article) { rec = model.byArticle.get(p.article.toLowerCase()); if (!rec) { out.push(this.msg(this.noArticle(model, p.article))); continue; } collection = rec.collection; }
+      if (!collection) continue;
+      const known = model.collections.get(sheet.norm(collection)); const name = known ? known.name : collection;
+      const dir = await this.whereFolder(name);
+      if (dir === null) { out.push(this.msg('Папка каталога на сети сейчас недоступна (или не указана в Настройках) — показать картинки не могу.', { kind: 'warn' })); continue; }
+      if (!dir) { out.push(this.msg(`Папки коллекции ${name} в каталоге нет — картинок показать не могу.`)); continue; }
+      let files; let title; let none;
+      if (what === 'renders') {
+        files = await folders.renders(dir); title = `Визуализации · ${name}`; none = `В папке «Рендери» коллекции ${name} картинок нет.`;
+        if (rec) { // если спросили про артикул — сначала те, где он упомянут по цвету и формату
+          const words = [rec.format && rec.format.replace(/[хx]/gi, 'x')].filter(Boolean);
+          const mine = files.filter((f) => words.every((w) => path.basename(f).toLowerCase().replace(/[хx×]/g, 'x').includes(w.toLowerCase())));
+          if (mine.length) files = mine;
+        }
+      } else {
+        files = (await folders.productPhotos(dir, rec ? rec.article : '')).map((n) => path.join(dir, n));
+        title = rec ? `Фото плитки · ${rec.article} · ${name}` : `Фото плиток · ${name}`;
+        none = rec ? `Фото артикула ${rec.article} в папке коллекции не нашёл. Оно должно лежать в ${dir} и называться «… - ${rec.article}.jpg».` : `В папке коллекции ${name} фото плиток нет.`;
+      }
+      if (!files.length) { out.push(this.msg(none, { card: { title: name, rows: [], note: '', folder: dir, open: dir } })); continue; }
+      out.push(this.msg(files.length === 1 ? 'Вот:' : `Нашёл картинок: ${files.length}.` + (files.length > 8 ? ' Показываю первые 8, остальные — в папке.' : ''),
+        { gallery: { title, items: files.slice(0, 8).map((f) => ({ path: f, name: path.basename(f) })), total: files.length, folder: what === 'renders' ? path.join(dir, folders.SUBDIRS[1]) : dir } }));
+    }
+    return out.length ? out : this.unknown(text, 'Не понял, по какому артикулу или коллекции показать картинки.');
+  }
 
   /** Только папки коллекции, без строки в характеристиках */
-  planFolders(model, d) {
+  async planFolders(model, d) {
     const p = d.products.find((x) => x.collection) || d.products[0];
     if (!p.collection) return this.ask('Как называется коллекция?', 'collection', p, { free: true, all: true });
     const known = model.collections.get(sheet.norm(p.collection));
     if (known) { p.collection = known.name; if (!p.tm) { const tm = Object.entries(known.tm).sort((a, b) => b[1] - a[1])[0]; if (tm) p.tm = tm[0]; } }
-    const fp = this.folderPlan([p]);
+    const fp = await this.folderPlan([p]);
     // папка уже есть и в ней всё на месте — создавать нечего, так и говорим
     if (fp.length && fp.every((f) => f.exists && !f.missing.length)) {
       this.draft = null; this.awaiting = null;
@@ -310,24 +355,26 @@ class TileChat {
     return { article: p.article, rows, empty };
   }
 
-  folderPlan(products) {
+  async folderPlan(products) {
     const root = this.store.get('catalogRoot');
     const groups = new Map();
     for (const p of products) groups.set(p.tm + '|' + p.collection, { tm: p.tm, status: p.status, collection: safeName(p.collection) });
-    const tops = folders.brands(root);
-    return [...groups.values()].map((g) => {
-      const f = { tm: g.tm, collection: g.collection, root, subs: folders.SUBDIRS, state: 'ready', parent: null, parents: tops || [], why: '' };
+    const ix = await folders.index(root);
+    const out = [];
+    for (const g of groups.values()) {
+      const f = { tm: g.tm, collection: g.collection, root, subs: folders.SUBDIRS, state: 'ready', parent: null, parents: ix ? ix.tops : [], why: '' };
       if (!root) f.state = 'no_root';
-      else if (!tops) f.state = 'unreachable';
+      else if (!ix) f.state = 'unreachable';
       else {
-        const ex = folders.findCollection(root, tops, g.collection);
+        const ex = folders.find(ix, g.collection);
         if (ex) { f.parent = ex.parent; f.collection = ex.name; f.why = 'папка коллекции уже есть'; f.exists = true; f.missing = folders.missingSubs(root, ex.parent, ex.name); } else {
-          const d = folders.defaultParent(tops, g, new Date().getFullYear());
+          const d = folders.defaultParent(ix.tops, g, new Date().getFullYear());
           if (d) { f.parent = d.parent; f.why = d.why; } else f.state = 'need_parent';
         }
       }
-      return f;
-    });
+      out.push(f);
+    }
+    return out;
   }
 
   async advanceUpdate(model, d, L) {
@@ -396,6 +443,7 @@ class TileChat {
         if (!chosen) { results.push({ ok: null, text: `Папки для ${f.collection} не создавал: не выбрано, в какую папку класть.` }); continue; }
         try {
           const r = folders.ensureCollection(f.root, chosen, f.collection);
+          folders.reset(); // появились новые папки — указатель перечитается
           f.done = true;
           results.push({ ok: true, text: r.created.length ? `Папки: создано ${r.created.length} — ${r.base}` + (r.existed.length ? ` (уже было: ${r.existed.length})` : '') : `Папки уже были: ${r.base}`, open: r.base });
         } catch (e) {
@@ -424,6 +472,7 @@ const HELP = [
   '• Создать только папки коллекции (без артикула):\n  «создай папку коллекции Fjord Rock»',
   '• Добавить коллекцию или артикул:\n  «Добавь коллекцию Fjord Rock, матовый рельефный керамогранит 600х600, толщина 8 мм, цвет серый, артикул FJ2580»',
   '• Дополнить или изменить данные:\n  «для FJ2580 PEI 4, R10» или сразу после добавления просто «PEI 4, R10, для пола»',
+  '• Показать: «что есть по 89192», «покажи картинку 89192», «покажи визуализации по Alpina Wood»',
   '• Файлы: перетащите в чат файл выпуска плитки — проверю, нет ли новых артикулов; файл упаковочных данных — сверю и обновлю упаковку. К файлу можно дописать, что сделать.',
   '• Записать задачу:\n  «задача: отправить файл технологу #плитка»',
   'Перед любым изменением я показываю план. Без кнопки «Выполнить» ничего не меняется. Всё, что не понял или не смог, попадает в журнал разработчику.',

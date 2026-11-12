@@ -36,6 +36,20 @@ function remember(list) {
   store.write('chat.json', { messages: all.slice(-300) });
   return list;
 }
+/** Миниатюра картинки. В Windows берём готовую у системы (быстро даже для больших файлов с сети). */
+async function thumb(file, height) {
+  try { const t = await nativeImage.createThumbnailFromPath(file, { width: Math.round(height * 1.6), height }); if (!t.isEmpty()) return 'data:image/jpeg;base64,' + t.toJPEG(80).toString('base64'); } catch { /* нет системной миниатюры — сделаем сами */ }
+  try { const img = nativeImage.createFromPath(file); if (!img.isEmpty()) return 'data:image/jpeg;base64,' + img.resize({ height: Math.min(height, img.getSize().height) }).toJPEG(78).toString('base64'); } catch { /* не картинка */ }
+  return '';
+}
+/** Ответы чата с картинками: дорисовываем миниатюры (сам чат про окно и картинки ничего не знает) */
+async function decorate(list) {
+  for (const m of list) {
+    if (m.gallery) for (const it of m.gallery.items) it.thumb = await thumb(it.path, 200);
+    if (m.card && m.card.photo) m.card.photoThumb = await thumb(m.card.photo, 200);
+  }
+  return list;
+}
 const userMsg = (text, files) => ({ id: 'u' + Date.now().toString(36), from: 'user', time: new Date().toISOString(), text, files: files && files.length ? files : undefined });
 /** Описание приложенного файла для переписки (у картинок — маленькая миниатюра) */
 function attachment(file, height = 96) {
@@ -75,13 +89,13 @@ async function status() {
     } catch (e) { out.sheet = { ok: false, text: String(e.message || e) }; }
   }
   if (store.get('catalogRoot')) {
-    const b = folders.brands(store.get('catalogRoot'));
-    if (!b) out.root = { ok: false, text: 'недоступна (нет сети или неверный путь)' };
+    const ix = await folders.index(store.get('catalogRoot'));
+    if (!ix) out.root = { ok: false, text: 'недоступна (нет сети или неверный путь)' };
     else {
       // бренды — только те папки, что совпали с ТМ из файла характеристик (остальные папки — не бренды)
       let found = [];
-      try { const m = await source.load(store); found = [...new Set((m.vocab.tm || []).map((tm) => folders.matchBrand(tm, b, store.get('brandFolders'))).filter(Boolean))].sort(); } catch { /* файл не задан */ }
-      out.root = { ok: true, text: found.length ? `доступна. Папки брендов: ${found.join(', ')}` : `доступна, папок внутри — ${b.length}` };
+      try { const m = await source.load(store); found = [...new Set((m.vocab.tm || []).map((tm) => folders.matchBrand(tm, ix.tops, store.get('brandFolders'))).filter(Boolean))].sort(); } catch { /* файл не задан */ }
+      out.root = { ok: true, text: (found.length ? `доступна. Папки брендов: ${found.join(', ')}` : `доступна, папок внутри — ${ix.tops.length}`) + `. Папок коллекций найдено — ${ix.map.size}` };
     }
   }
   return out;
@@ -118,7 +132,7 @@ function handlers() {
   h('chat:send', async (text, files) => {
     const paths = (Array.isArray(files) ? files : []).map(String).filter((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } }).slice(0, 30);
     const u = userMsg(text, paths.map(attachment)); remember([u]);
-    return [u].concat(remember(await chat.handle(text, paths)));
+    return [u].concat(remember(await decorate(await chat.handle(text, paths))));
   });
   h('files:info', (paths) => (Array.isArray(paths) ? paths : []).map(String).filter((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } }).slice(0, 30)
     .map((f) => Object.assign(attachment(f, 360), { size: fs.statSync(f).size }))); // для окна отправки: превью покрупнее
@@ -229,6 +243,7 @@ app.whenReady().then(() => {
   process.on('uncaughtException', (e) => journal.add('error', String(e.message || e), { stack: String(e.stack || '').split('\n').slice(0, 5) }));
   process.on('unhandledRejection', (e) => journal.add('error', String((e && e.message) || e)));
   handlers(); createWindow(); setupUpdater();
+  setTimeout(() => { folders.index(store.get('catalogRoot')).catch(() => {}); }, 1500); // заранее читаем список папок каталога, чтобы первый ответ не ждал сеть
 });
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.on('window-all-closed', () => app.quit());

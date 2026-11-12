@@ -124,7 +124,11 @@ function parseLocal(text, model) {
   else if (hasFields && !f.collection && !ask) intent = 'update'; // «PEI 4, R10» — продолжение про последний артикул
   const products = articles.length ? articles.map((a) => Object.assign({ article: a }, f)) : (hasFields ? [f] : []);
   if (ask && !addWord && !updWord && (articles.length || f.collection)) intent = 'info';
-  return { intent, products, task: '', explicit: addWord || updWord || articles.length > 0 };
+  // «покажи картинку 89192», «покажи визуализации по Alpina Wood»
+  const pic = /картинк|фото|изображен|зображен|текстур|фейс|(?<![\p{L}])face/iu.test(low); const rend = /в[иі]зуал[иі]зац|рендер|[иі]нтер.?[ьє]?ер/iu.test(low);
+  let what = '';
+  if ((pic || rend) && !addWord && !updWord && (articles.length || f.collection)) { intent = 'show'; what = rend ? 'renders' : 'photo'; }
+  return { intent, products, task: '', what, explicit: addWord || updWord || articles.length > 0 };
 }
 
 const FIELD_DOC = {
@@ -137,8 +141,8 @@ function aiPrompt(model) {
   const list = (key, max = 60) => (model.vocab[key] || []).slice(0, max).join(' | ');
   return [
     'Ты разбираешь сообщения сотрудника завода керамической плитки Golden Tile. Сообщения на русском или украинском.',
-    'Верни ТОЛЬКО JSON вида: {"intent": "...", "products": [{...}], "task": "", "reply": ""}.',
-    'intent: "add" — добавить новые артикулы/коллекцию (также когда просят создать только папку коллекции без артикула — тогда в products один объект с collection); "update" — дополнить или изменить данные существующих артикулов (в сообщении есть новые значения); "info" — вопрос о том, что уже есть: показать данные артикула или коллекции (в products объект с article или collection); "task" — записать задачу в планировщик (текст задачи в поле task); "chat" — приветствие, благодарность, вопрос о возможностях программы или общий вопрос о плитке: ответ дай в поле reply, коротко, по-русски, без жаргона; "unknown" — просьба сделать то, чего программа не умеет.',
+    'Верни ТОЛЬКО JSON вида: {"intent": "...", "products": [{...}], "task": "", "reply": "", "what": ""}.',
+    'intent: "add" — добавить новые артикулы/коллекцию (также когда просят создать только папку коллекции без артикула — тогда в products один объект с collection); "update" — дополнить или изменить данные существующих артикулов (в сообщении есть новые значения); "info" — вопрос о том, что уже есть: показать данные артикула или коллекции (в products объект с article или collection); "show" — просят показать картинку, фото, текстуру плитки или визуализации/рендеры (в products объект с article или collection; в поле what: "photo" или "renders"); "task" — записать задачу в планировщик (текст задачи в поле task); "chat" — приветствие, благодарность, вопрос о возможностях программы или общий вопрос о плитке: ответ дай в поле reply, коротко, по-русски, без жаргона; "unknown" — просьба сделать то, чего программа не умеет.',
     'Программа умеет ТОЛЬКО: добавить артикул/коллекцию в характеристики и создать папки коллекции; создать только папки коллекции; дополнить или изменить данные артикула; показать данные артикула или коллекции; записать задачу. В reply нельзя писать, что что-то сделано, будет сделано или найдено — действий ты не выполняешь и данных не видишь.',
     'products — по одному объекту на артикул. Если артикулов несколько и у них разные цвета/форматы — раздели правильно. Поля объекта (включай только то, что прямо сказано в сообщении, ничего не выдумывай):',
     ...Object.entries(FIELD_DOC).map(([k, v]) => `- ${k}: ${v}`),
@@ -154,9 +158,10 @@ function aiPrompt(model) {
 /** Разбор: ИИ (если есть) + скрипт как страховка. ai: функция (system, user) -> объект */
 async function understand(text, model, ai) {
   const local = parseLocal(text, model);
-  if (!ai || local.intent === 'task') return Object.assign(local, { via: 'script' });
+  // задачу, вопрос про артикул/коллекцию и просьбу показать картинки скрипт понимает сам — ИИ не ждём
+  if (!ai || ['task', 'show', 'info'].includes(local.intent)) return Object.assign(local, { via: 'script' });
   const res = await ai(aiPrompt(model), text);
-  const intent = ['add', 'update', 'info', 'task', 'chat', 'unknown'].includes(res && res.intent) ? res.intent : 'unknown';
+  const intent = ['add', 'update', 'info', 'show', 'task', 'chat', 'unknown'].includes(res && res.intent) ? res.intent : 'unknown';
   let products = Array.isArray(res && res.products) ? res.products.filter((p) => p && typeof p === 'object') : [];
   products = products.map((p) => {
     const out = {};
@@ -169,6 +174,6 @@ async function understand(text, model, ai) {
   // ИИ не распознал команду, а скрипт видит явную (есть глагол, артикул или вопрос про артикул) — верим скрипту
   if ((intent === 'unknown' || (intent === 'chat' && !reply)) && (local.intent === 'info' || (local.intent !== 'unknown' && local.explicit))) return Object.assign(local, { via: 'script' });
   if (local.intent === 'info' && intent === 'update') return Object.assign(local, { via: 'script' }); // вопрос — не правка
-  return { intent, products, task: String((res && res.task) || ''), reply, via: 'ai' };
+  return { intent, products, task: String((res && res.task) || ''), reply, what: (res && res.what) === 'renders' ? 'renders' : 'photo', via: 'ai' };
 }
 module.exports = { parseLocal, understand };

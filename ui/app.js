@@ -128,10 +128,24 @@ function messageNode(m) {
   }
   if (m.plan) node.append(planCard(m.plan));
   if (m.card) {
-    const c = m.card; const box = el('div', { class: 'card plan' }, el('h3', { text: c.title }));
-    if (c.rows.length) { const kv = el('dl', { class: 'kv' }); for (const r of c.rows) kv.append(el('dt', { text: r.label }), el('dd', { text: r.value })); box.append(kv); }
+    const c = m.card; const box = el('div', { class: 'card plan info' });
+    box.append(el('div', { class: 'info-head' }, el('h3', { text: c.title }), c.photoThumb && el('button', { class: 'pic', title: 'Открыть фото', onclick: () => api.open(c.photo) }, el('img', { src: c.photoThumb, alt: 'Фото плитки' }))));
+    const body = el('div', { class: 'info-body' }); const cols = el('div', { class: 'info-cols' });
+    for (const sec of c.sections || []) {
+      const kv = el('dl', { class: 'kv' }); for (const r of sec.rows) kv.append(el('dt', { text: r.label }), el('dd', { text: r.value }));
+      cols.append(el('div', { class: 'sec' }, el('div', { class: 'sec-t', text: sec.title }), kv));
+    }
+    if (c.rows && c.rows.length) { const kv = el('dl', { class: 'kv' }); for (const r of c.rows) kv.append(el('dt', { text: r.label }), el('dd', { text: r.value })); cols.append(kv); }
+    if (cols.childNodes.length) body.append(cols);
+    if (body.childNodes.length) box.append(body);
     if (c.note) box.append(el('div', { class: 'note', text: c.note }));
     if (c.folder) box.append(el('div', { class: 'note' }, el('span', { class: 'path', text: c.folder }), c.open && el('button', { class: 'link', text: 'Открыть папку', onclick: () => api.open(c.open) })));
+    node.append(box);
+  }
+  if (m.gallery) {
+    const g = m.gallery; const box = el('div', { class: 'card plan' }, el('h3', { text: g.title })); const grid = el('div', { class: 'gallery' });
+    for (const it of g.items) grid.append(el('button', { class: 'pic', title: it.name + ' — открыть', onclick: () => api.open(it.path) }, it.thumb ? el('img', { src: it.thumb, alt: it.name }) : el('span', { class: 'nopic', text: it.name }), el('span', { class: 'cap', text: it.name })));
+    box.append(grid, el('div', { class: 'note' }, g.total > g.items.length ? `Показано ${g.items.length} из ${g.total}. ` : '', el('button', { class: 'link', text: 'Открыть папку', onclick: () => api.open(g.folder) })));
     node.append(box);
   }
   if (m.results) {
