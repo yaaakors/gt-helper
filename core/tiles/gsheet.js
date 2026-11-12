@@ -10,13 +10,13 @@ const SCRIPT_VERSION = 1;
 async function call(cfg, payload) {
   if (!cfg.url) throw new Error('Не указан адрес веб-приложения Google Таблицы (Настройки)');
   if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(cfg.url)) throw new Error('Адрес должен начинаться с https://script.google.com/ — это «URL веб-приложения» из окна развёртывания');
-  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 60000);
+  const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), payload.action === 'read' ? 60000 : 300000);
   let res; let text;
   try {
     res = await fetch(cfg.url, { method: 'POST', redirect: 'follow', signal: ctrl.signal, headers: { 'content-type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ token: cfg.token }, payload)) });
     text = await res.text();
   } catch (e) {
-    throw new Error(e.name === 'AbortError' ? 'Google Таблица не ответила за минуту' : 'Нет связи с Google Таблицей (проверьте интернет): ' + (e.message || e));
+    throw new Error(e.name === 'AbortError' ? 'Google Таблица не ответила вовремя' : 'Нет связи с Google Таблицей (проверьте интернет): ' + (e.message || e));
   } finally { clearTimeout(timer); }
   let data;
   try { data = JSON.parse(text); } catch {

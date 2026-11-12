@@ -5,9 +5,10 @@ const sheet = require('./sheet');
 const source = require('./source');
 const folders = require('./folders');
 const path = require('path');
-const { understand } = require('./parse');
+const { understand, parseLocal } = require('./parse');
+const filesLib = require('./files');
 
-const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'status', 'year', 'comment'];
+const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'status', 'year', 'comment'];
 const WANTED = ['purpose', 'usage', 'type', 'format', 'thickness', 'color', 'surface', 'relief', 'design', 'pei', 'r', 'ean']; // что напомнить, если пусто
 const safeName = (s) => String(s).replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim();
 let seq = 0;
@@ -21,10 +22,14 @@ class TileChat {
   msg(text, extra) { return Object.assign({ id: uid(), from: 'bot', time: new Date().toISOString(), text }, extra || {}); }
   label(model, key) { return model.labels[key] || key; }
 
-  async handle(text) {
+  async handle(text, files) {
     text = String(text || '').trim();
-    if (!text) return [];
+    if (!text && !(files && files.length)) return [];
     try {
+      if (files && files.length) { this.awaiting = null; this.draft = null; return await this.handleFiles(text, files); }
+      // кнопка «Добавить <артикул>» после проверки выпуска
+      const pick = /^Добавить ([\p{L}\d]+)$/u.exec(text);
+      if (pick && this.fresh && this.fresh.has(pick[1].toLowerCase())) return await this.addFromRelease(this.fresh.get(pick[1].toLowerCase()));
       if (/^(помощь|помоги|что ты умеешь\??|help|\?)$/iu.test(text)) return [this.msg(HELP)];
       if (this.awaiting) {
         const used = this.applyAnswer(text);
@@ -44,6 +49,13 @@ class TileChat {
         this.journal.add('error', 'ИИ не ответил, сообщение разобрано скриптом', { text, error: String(e.message || e) });
         u = await understand(text, model, null); note = 'ИИ сейчас не ответил, разобрал сообщение скриптом. ';
       }
+      // заводской код «FJ2580» → артикул характеристик «FJ258» (последний знак — сорт)
+      for (const p of u.products || []) {
+        if (!p.article || model.byArticle.has(p.article.toLowerCase()) || p.article.length !== model.articleLen + 1) continue;
+        const short = p.article.slice(0, model.articleLen);
+        note += `Артикул в характеристиках пишется без последнего знака (сорта): ${p.article} → ${short}. `;
+        p.article = short;
+      }
       if (u.intent === 'task') {
         const t = this.tasks.add(u.task || text);
         return [this.msg(`Записал в задачи: «${t.text}»`, { refresh: 'tasks' })];
@@ -51,7 +63,7 @@ class TileChat {
       // «ON099» или «что по ON099?» без новых значений — это вопрос, а не правка
       const bare = (p) => Object.keys(p).every((k) => k === 'article' || k === 'collection');
       if (u.intent === 'update' && u.products.length && u.products.every((p) => p.article && bare(p))) u.intent = 'info';
-      if (u.intent === 'info') return this.info(model, u.products, text);
+      if (u.intent === 'info') { const r = this.info(model, u.products, text); if (note && r[0]) r[0].text = note + r[0].text; return r; }
       if (u.intent === 'chat' && u.reply) return [this.msg(u.reply)];
       if (u.intent === 'add' || u.intent === 'update') {
         let products = u.products.length ? u.products : [{}];
@@ -176,6 +188,58 @@ class TileChat {
     this.plans.set(plan.id, plan); this.draft = null; this.awaiting = null;
     const n = plan.products.length;
     return [this.msg((d.note || '') + (n === 1 ? `Понял. Вот что сделаю для ${plan.raw[0].article}:` : `Понял, артикулов: ${n}. Вот что сделаю:`), { plan })];
+  }
+
+  /** Файлы, брошенные в чат: смотрим, что внутри, и делаем то, что умеем */
+  async handleFiles(text, files) {
+    if (!source.configured(this.store)) return [this.msg('Сначала укажите в Настройках, где лежат характеристики: Excel-файл или Google Таблица.', { kind: 'warn' })];
+    const model = await source.load(this.store);
+    const out = []; const releases = []; const packs = []; const other = [];
+    for (const f of files) {
+      const name = path.basename(f);
+      if (filesLib.kindOf(f) !== 'excel') { other.push(name); continue; }
+      let grid;
+      try { grid = filesLib.readGrid(f).grid; } catch (e) { out.push(this.msg(`Не смог прочитать «${name}»: ${e.message || e}`, { kind: 'bad' })); this.journal.add('failed', 'Чтение файла из чата', { name, error: String(e.message || e) }); continue; }
+      const type = filesLib.detect(grid);
+      if (type === 'release') releases.push({ name, grid }); else if (type === 'pack') packs.push({ name, grid }); else other.push(name);
+    }
+    if (releases.length) {
+      let checked = 0; const fresh = new Map();
+      for (const r of releases) { const res = filesLib.releaseCheck(r.grid, model); checked += res.checked; for (const x of res.fresh) if (!fresh.has(x.article.toLowerCase())) fresh.set(x.article.toLowerCase(), x); }
+      const head = `Проверил выпуск: файлов — ${releases.length}, строк первого сорта — ${checked}. `;
+      if (!fresh.size) out.push(this.msg(head + 'Новых артикулов нет — все уже есть в характеристиках.'));
+      else {
+        this.fresh = fresh; const list = [...fresh.values()];
+        out.push(this.msg(head + `Новых артикулов — ${list.length}:\n\n` + list.map((x) => `${x.collection} - ${x.article} - ${x.name}`).join('\n') + '\n\nМогу завести их в характеристики — нажмите кнопку, покажу план.', { options: list.slice(0, 12).map((x) => 'Добавить ' + x.article) }));
+      }
+    }
+    for (const pk of packs) {
+      let d;
+      try { d = filesLib.packDiff(pk.grid, model); } catch (e) { out.push(this.msg(`«${pk.name}»: ${e.message || e}`, { kind: 'bad' })); continue; }
+      const tail = d.unknown ? ` Ещё ${d.unknown} кодов из файла в характеристиках нет — их не трогаю.` : '';
+      if (!d.changes.length) { out.push(this.msg(`Сверил упаковку по файлу «${pk.name}»: артикулов — ${d.matched}, отличий нет — обновлять нечего.` + tail)); continue; }
+      const view = d.changes.map((c) => ({ article: c.article, collection: c.collection, rows: Object.entries(c.fields).map(([k, v]) => ({ key: k, label: this.label(model, k), from: model.byArticle.get(c.article.toLowerCase())[k], value: v })) }));
+      const plan = { id: uid(), mode: 'update', status: 'pending', warnings: [], changes: d.changes.map((c) => ({ article: c.article, fields: c.fields })), view, target: source.title(this.store) };
+      this.plans.set(plan.id, plan);
+      out.push(this.msg(`Сверил упаковку по файлу «${pk.name}»: артикулов — ${d.matched}, с отличиями — ${d.changes.length}.` + tail + ' Вот что изменю:', { plan }));
+    }
+    if (other.length) {
+      this.journal.add('not_understood', text || '(файлы без подписи)', { files: other });
+      out.push(this.msg(`${other.length === 1 ? 'Файл' : 'Файлы'} ${other.map((n) => `«${n}»`).join(', ')} принял, но работать с такими пока не умею. Сейчас понимаю файлы выпуска плитки и файл упаковочных данных. Записал в журнал разработчику — добавят в обновлении.`));
+    }
+    return out;
+  }
+
+  /** Новый артикул из файла выпуска → обычный план добавления (данные берём из заводского названия) */
+  async addFromRelease(x) {
+    const model = await source.load(this.store);
+    const f = (parseLocal(x.name, model).products[0]) || {};
+    delete f.article;
+    const known = model.collections.get(sheet.norm(x.collection));
+    const title = (t) => t.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
+    const p = Object.assign(f, { article: x.article, collection: known ? known.name : (f.collection && sheet.norm(f.collection).startsWith(sheet.norm(x.collection)) ? f.collection : title(x.collection)) });
+    this.draft = { mode: 'add', products: [p], source: x.name, note: `Данные взял из названия в файле выпуска: «${x.name}». Проверьте их в плане. ` };
+    return await this.advance();
   }
 
   /** Где лежит папка коллекции (если каталог доступен) */
@@ -360,6 +424,7 @@ const HELP = [
   '• Создать только папки коллекции (без артикула):\n  «создай папку коллекции Fjord Rock»',
   '• Добавить коллекцию или артикул:\n  «Добавь коллекцию Fjord Rock, матовый рельефный керамогранит 600х600, толщина 8 мм, цвет серый, артикул FJ2580»',
   '• Дополнить или изменить данные:\n  «для FJ2580 PEI 4, R10» или сразу после добавления просто «PEI 4, R10, для пола»',
+  '• Файлы: перетащите в чат файл выпуска плитки — проверю, нет ли новых артикулов; файл упаковочных данных — сверю и обновлю упаковку. К файлу можно дописать, что сделать.',
   '• Записать задачу:\n  «задача: отправить файл технологу #плитка»',
   'Перед любым изменением я показываю план. Без кнопки «Выполнить» ничего не меняется. Всё, что не понял или не смог, попадает в журнал разработчику.',
 ].join('\n\n');

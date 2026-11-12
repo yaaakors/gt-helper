@@ -1,6 +1,6 @@
 // Оболочка: окно, связь экрана с модулями, обновления. Вся логика — в папке core (от окна не зависит).
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { Store } = require('./core/store');
@@ -36,7 +36,13 @@ function remember(list) {
   store.write('chat.json', { messages: all.slice(-300) });
   return list;
 }
-const userMsg = (text) => ({ id: 'u' + Date.now().toString(36), from: 'user', time: new Date().toISOString(), text });
+const userMsg = (text, files) => ({ id: 'u' + Date.now().toString(36), from: 'user', time: new Date().toISOString(), text, files: files && files.length ? files : undefined });
+/** Описание приложенного файла для переписки (у картинок — маленькая миниатюра) */
+function attachment(file) {
+  const a = { name: path.basename(file), path: file, kind: /\.(jpe?g|png|webp|bmp)$/i.test(file) ? 'image' : /\.(xlsx?|xlsm|csv)$/i.test(file) ? 'excel' : 'file' };
+  if (a.kind === 'image') { try { const img = nativeImage.createFromPath(file); if (!img.isEmpty()) a.thumb = 'data:image/jpeg;base64,' + img.resize({ height: 96 }).toJPEG(72).toString('base64'); } catch { /* без миниатюры */ } }
+  return a;
+}
 
 // ---------- обновления ----------
 function sendUpdate(patch) { update = Object.assign({}, update, patch); if (win && !win.isDestroyed()) win.webContents.send('update', update); }
@@ -108,7 +114,18 @@ function handlers() {
   h('app:info', () => ({ version: app.getVersion(), update, firstRun: !source.configured(store), look: look() }));
 
   h('chat:history', () => history().map((m) => { if (m.plan && ['pending', 'failed'].includes(m.plan.status) && !chat.plans.has(m.plan.id)) m.plan.status = 'expired'; return m; }));
-  h('chat:send', async (text) => { const u = userMsg(text); remember([u]); return [u].concat(remember(await chat.handle(text))); });
+  h('chat:send', async (text, files) => {
+    const paths = (Array.isArray(files) ? files : []).map(String).filter((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } }).slice(0, 30);
+    const u = userMsg(text, paths.map(attachment)); remember([u]);
+    return [u].concat(remember(await chat.handle(text, paths)));
+  });
+  h('files:pick', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] }); return r.canceled ? [] : r.filePaths; });
+  h('files:paste', (name, data) => { // картинка, вставленная из буфера: сохраняем во «входящие» папки данных
+    const dir = store.file('inbox'); fs.mkdirSync(dir, { recursive: true });
+    const safe = String(name || 'вставка.png').replace(/[<>:"/\\|?*]/g, '_').slice(-80);
+    const to = path.join(dir, Date.now().toString(36) + '-' + safe);
+    fs.writeFileSync(to, Buffer.from(data)); return to;
+  });
   h('chat:execute', async (planId, opts) => remember(await chat.execute(planId, opts)));
   h('chat:cancel', (planId) => remember(chat.cancel(planId)));
   h('chat:clear', () => { store.write('chat.json', { messages: [] }); return true; });

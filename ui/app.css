@@ -111,7 +111,7 @@ input:focus, textarea:focus { border-color: var(--gold-d); }
 .res.ok .mark { color: var(--ok); } .res.bad .mark { color: var(--bad); } .res.skip .mark { color: var(--warn); }
 .res small { grid-column: 2; color: var(--faint); word-break: break-all; }
 .composer { width: 100%; max-width: 764px; padding: 12px 32px 24px; position: relative; }
-.composer textarea { display: block; width: 100%; resize: none; max-height: 160px; min-height: 48px; line-height: 1.5; border-radius: 14px; padding: 12px 52px 12px 16px; }
+.composer textarea { display: block; width: 100%; resize: none; max-height: 160px; min-height: 48px; line-height: 1.5; border-radius: 14px; padding: 12px 52px 12px 48px; }
 .composer .send { position: absolute; right: 40px; bottom: 32px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: var(--tone); display: flex; align-items: center; justify-content: center; }
 .composer .send:hover { background: var(--tone-h); }
 .composer .send:disabled { opacity: .5; }
@@ -177,3 +177,20 @@ html.boot body { visibility: hidden; }
 body.dragging .done-zone { border-color: var(--gold-d); }
 .done-zone.over { border-style: solid; border-color: var(--gold); background: var(--tone); }
 .done-zone * { pointer-events: none; }
+
+/* файлы в чате */
+.composer .clip { position: absolute; left: 40px; bottom: 32px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.composer .clip:hover { background: var(--tone); color: var(--text); }
+.attach-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.attach-list:empty { display: none; }
+.file { display: inline-flex; align-items: center; gap: 8px; max-width: 280px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px 4px 12px; font-size: 13px; }
+.file .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file .ext { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+.file button { border: 0; background: none; color: var(--muted); padding: 0 4px; font-size: 16px; line-height: 1; }
+.file button:hover { color: var(--bad); }
+#view-chat.dropping .composer textarea { border-color: var(--gold); border-style: dashed; background: var(--tone); }
+.m.user .files { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+.m.user .files:only-child { margin-bottom: 0; }
+.m.user .files img { height: 96px; max-width: 220px; border-radius: 8px; display: block; object-fit: cover; }
+.m.user .file { border-color: var(--field); }
+.more { color: var(--muted); font-size: 13px; margin-top: 8px; }

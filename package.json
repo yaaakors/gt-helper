@@ -1,7 +1,7 @@
 {
   "name": "gt-helper",
   "productName": "GT Помощник",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "description": "Личный помощник: чат для работы с плиткой и планировщик задач",
   "author": "Vit",
   "license": "UNLICENSED",
@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
-    "exceljs": "^4.4.0"
+    "exceljs": "^4.4.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "electron": "^45.3.0",

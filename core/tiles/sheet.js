@@ -15,8 +15,12 @@ const FIELDS = [
   ['design', (h) => h === 'тип дизайну'], ['pei', (h) => h.includes('(pei)')], ['ptv', (h) => h.includes('(ptv)')],
   ['r', (h) => h.includes('(r)')], ['ean', (h) => h.startsWith('штрихкод')], ['status', (h) => h === 'актуальність'],
   ['year', (h) => h.startsWith('рік випуску')], ['comment', (h) => h === 'коментар'],
+  // упаковка
+  ['pcs', (h) => h.startsWith('шт в упаков')], ['m2pack', (h) => h.startsWith('м² в упаков') || h.startsWith('м2 в упаков')], ['w1', (h) => h.startsWith('вага 1 м')],
+  ['wpack', (h) => h.startsWith('вага упаковки')], ['packsPal', (h) => h.startsWith('упаковок на палет')], ['m2pal', (h) => h.startsWith('м² на палет') || h.startsWith('м2 на палет')],
+  ['wpal', (h) => h.startsWith('вага палет')],
 ];
-const NUMERIC = new Set(['thickness', 'pei', 'year']);
+const NUMERIC = new Set(['thickness', 'pei', 'year', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal']);
 // Поля, где значение должно быть из уже существующих в файле
 const CLOSED = ['tm', 'purpose', 'type', 'rect', 'color', 'surface', 'relief', 'frost', 'r', 'status'];
 
@@ -95,6 +99,9 @@ function modelFromGrid(grid, colorRows, meta) {
     if (rec.format && rec.type && rec.rect) { const k = rec.format + '|' + rec.type; (rectVotes[k] = rectVotes[k] || {})[rec.rect] = (rectVotes[k][rec.rect] || 0) + 1; }
     if (rec.type && rec.frost) (frostVotes[rec.type] = frostVotes[rec.type] || {})[rec.frost] = (frostVotes[rec.type][rec.frost] || 0) + 1;
   }
+  // обычная длина артикула (в характеристиках — 5 знаков; заводской код длиннее на знак сорта)
+  const lens = {}; for (const r of rows) lens[r.article.length] = (lens[r.article.length] || 0) + 1;
+  const articleLen = Number((Object.entries(lens).sort((a, b) => b[1] - a[1])[0] || [5])[0]);
   const vocab = {};
   for (const [key, c] of Object.entries(counts)) vocab[key] = Object.entries(c).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
   const colors = {}; // колір -> група
@@ -102,7 +109,7 @@ function modelFromGrid(grid, colorRows, meta) {
   // Составные значения («мармур, геометрія») -> отдельные слова
   const parts = (key) => [...new Set((vocab[key] || []).flatMap((v) => v.split(',').map((x) => x.trim())).filter(Boolean))];
   return Object.assign({
-    headerRow, last, labels, cols, rows, byArticle, collections, vocab, colors,
+    headerRow, last, labels, cols, rows, byArticle, collections, vocab, colors, articleLen,
     designParts: parts('design'), usageParts: parts('usage'),
     rectRule: majority(rectVotes), frostRule: majority(frostVotes),
   }, meta);

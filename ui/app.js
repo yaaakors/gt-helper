@@ -73,12 +73,13 @@ function planCard(plan) {
       }
     } else {
       const part = el('div', { class: 'part' }, el('h3', { text: (plan.target || 'Файл характеристик') + ' — изменить' }));
-      for (const v of plan.view) {
+      for (const v of plan.view.slice(0, 20)) {
         part.append(el('div', { class: 'note', text: `${v.article} · ${v.collection}` }));
         const kv = el('dl', { class: 'kv' });
         for (const r of v.rows) kv.append(el('dt', { text: r.label }), el('dd', {}, r.from && el('span', { class: 'from', text: r.from }), r.value));
         part.append(kv);
       }
+      if (plan.view.length > 20) part.append(el('div', { class: 'more', text: `…и ещё артикулов: ${plan.view.length - 20}. Изменю все ${plan.view.length}.` }));
       card.append(part);
     }
     for (const w of plan.warnings || []) card.append(el('div', { class: 'warnline', text: w }));
@@ -102,8 +103,22 @@ function planCard(plan) {
   return card;
 }
 
+function fileChip(name, onRemove) {
+  const dot = name.lastIndexOf('.');
+  return el('span', { class: 'file', title: name }, el('span', { class: 'n', text: dot > 0 ? name.slice(0, dot) : name }), dot > 0 && el('span', { class: 'ext', text: name.slice(dot + 1) }),
+    onRemove && el('button', { type: 'button', 'aria-label': 'Убрать файл', text: '×', onclick: onRemove }));
+}
 function messageNode(m) {
-  if (m.from === 'user') return el('div', { class: 'm user', text: m.text });
+  if (m.from === 'user') {
+    const node = el('div', { class: 'm user' });
+    if (m.files && m.files.length) {
+      const box = el('div', { class: 'files' });
+      for (const f of m.files) box.append(f.thumb ? el('img', { src: f.thumb, alt: f.name, title: f.name }) : fileChip(f.name));
+      node.append(box);
+    }
+    if (m.text) node.append(el('div', { text: m.text }));
+    return node;
+  }
   const node = el('div', { class: 'm bot' });
   if (m.text) node.append(el('div', { class: 'text', text: m.text }));
   if (m.options && m.options.length) {
@@ -150,15 +165,22 @@ function addMessages(list) {
   scrollChat();
 }
 let busy = false;
-async function send(text) {
-  text = text.trim();
-  if (!text || busy) return;
+let attached = []; // пути файлов, приложенных к следующему сообщению
+function drawAttached() {
+  const box = $('#attach-list'); box.textContent = '';
+  attached.forEach((p, i) => box.append(fileChip(p.split(/[\\/]/).pop(), () => { attached.splice(i, 1); drawAttached(); })));
+}
+function attach(paths) { for (const p of paths) if (p && !attached.includes(p)) attached.push(p); drawAttached(); $('#chat-input').focus(); }
+async function send(text, files) {
+  text = text.trim(); files = files || [];
+  if ((!text && !files.length) || busy) return;
   busy = true; $('#chat-send').disabled = true;
   $('.welcome', chatBox)?.remove();
   chatBox.querySelectorAll('.options button').forEach((b) => (b.disabled = true));
-  const mine = messageNode({ from: 'user', text }); const wait = el('div', { class: 'm bot typing', text: 'Думаю…' });
-  chatBox.append(mine, wait); scrollChat();
-  try { const res = await api.chat.send(text); addMessages(res.slice(1)); }
+  const wait = el('div', { class: 'm bot typing', text: files.length ? 'Смотрю файлы…' : 'Думаю…' });
+  const mine = files.length ? null : messageNode({ from: 'user', text });
+  if (mine) chatBox.append(mine); chatBox.append(wait); scrollChat();
+  try { const res = await api.chat.send(text, files); if (!mine) { wait.before(messageNode(res[0])); } addMessages(res.slice(1)); }
   catch (e) { addMessages([{ from: 'bot', time: new Date().toISOString(), text: 'Ошибка: ' + e.message + '\nЗаписал в журнал разработчику.' }]); }
   finally { wait.remove(); busy = false; $('#chat-send').disabled = false; scrollChat(); }
 }
@@ -166,7 +188,22 @@ const input = $('#chat-input');
 function grow() { input.style.height = 'auto'; input.style.height = Math.min(160, input.scrollHeight + 2) + 'px'; }
 input.addEventListener('input', grow);
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); } });
-$('#composer').addEventListener('submit', (e) => { e.preventDefault(); const t = input.value; if (!t.trim() || busy) return; input.value = ''; grow(); send(t); });
+$('#composer').addEventListener('submit', (e) => { e.preventDefault(); const t = input.value; if ((!t.trim() && !attached.length) || busy) return; const files = attached; attached = []; drawAttached(); input.value = ''; grow(); send(t, files); });
+// приложить файл: скрепка, перетаскивание в окно чата, вставка из буфера
+$('#chat-attach').addEventListener('click', async () => attach(await api.files.pick()));
+{
+  const view = $('#view-chat'); let depth = 0;
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  view.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; view.classList.add('dropping'); });
+  view.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  view.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) view.classList.remove('dropping'); });
+  view.addEventListener('drop', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; view.classList.remove('dropping'); attach([...e.dataTransfer.files].map((f) => api.files.pathOf(f))); });
+  input.addEventListener('paste', async (e) => {
+    const files = [...(e.clipboardData?.files || [])]; if (!files.length) return;
+    e.preventDefault();
+    for (const f of files) attach([api.files.pathOf(f) || await api.files.paste(f.name, await f.arrayBuffer())]);
+  });
+}
 $('#chat-help').addEventListener('click', () => send('помощь'));
 $('#chat-clear').addEventListener('click', async () => { await api.chat.clear(); chatBox.textContent = ''; planNodes.clear(); welcome(false); });
 
