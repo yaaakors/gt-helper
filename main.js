@@ -38,9 +38,9 @@ function remember(list) {
 }
 const userMsg = (text, files) => ({ id: 'u' + Date.now().toString(36), from: 'user', time: new Date().toISOString(), text, files: files && files.length ? files : undefined });
 /** Описание приложенного файла для переписки (у картинок — маленькая миниатюра) */
-function attachment(file) {
+function attachment(file, height = 96) {
   const a = { name: path.basename(file), path: file, kind: /\.(jpe?g|png|webp|bmp)$/i.test(file) ? 'image' : /\.(xlsx?|xlsm|csv)$/i.test(file) ? 'excel' : 'file' };
-  if (a.kind === 'image') { try { const img = nativeImage.createFromPath(file); if (!img.isEmpty()) a.thumb = 'data:image/jpeg;base64,' + img.resize({ height: 96 }).toJPEG(72).toString('base64'); } catch { /* без миниатюры */ } }
+  if (a.kind === 'image') { try { const img = nativeImage.createFromPath(file); if (!img.isEmpty()) a.thumb = 'data:image/jpeg;base64,' + img.resize({ height: Math.min(height, img.getSize().height) }).toJPEG(78).toString('base64'); } catch { /* без миниатюры */ } }
   return a;
 }
 
@@ -119,6 +119,8 @@ function handlers() {
     const u = userMsg(text, paths.map(attachment)); remember([u]);
     return [u].concat(remember(await chat.handle(text, paths)));
   });
+  h('files:info', (paths) => (Array.isArray(paths) ? paths : []).map(String).filter((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } }).slice(0, 30)
+    .map((f) => Object.assign(attachment(f, 360), { size: fs.statSync(f).size }))); // для окна отправки: превью покрупнее
   h('files:pick', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] }); return r.canceled ? [] : r.filePaths; });
   h('files:paste', (name, data) => { // картинка, вставленная из буфера: сохраняем во «входящие» папки данных
     const dir = store.file('inbox'); fs.mkdirSync(dir, { recursive: true });

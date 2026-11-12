@@ -28,9 +28,8 @@
     <header class="head"><h1>Чат</h1><div class="head-actions"><button class="link" id="chat-help">Что умею</button><button class="link" id="chat-clear">Очистить переписку</button></div></header>
     <div class="chat" id="chat"></div>
     <form class="composer" id="composer">
-      <div id="attach-list" class="attach-list"></div>
       <button class="clip" type="button" id="chat-attach" aria-label="Приложить файл" title="Приложить файл"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 8.5l-5.2 5.2a3.2 3.2 0 0 1-4.5-4.5l5.6-5.6a2.1 2.1 0 0 1 3 3L7.9 12.1a1 1 0 0 1-1.5-1.5l4.9-4.9"/></svg></button>
-      <textarea id="chat-input" rows="1" placeholder="Напишите, что сделать, или перетащите сюда файл и подпишите, что с ним сделать"></textarea>
+      <textarea id="chat-input" rows="1" placeholder="Напишите, что сделать, или перетащите сюда файл"></textarea>
       <button class="send" type="submit" id="chat-send" aria-label="Отправить" title="Отправить (Enter)"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5"/></svg></button>
     </form>
   </section>
@@ -72,6 +71,14 @@
     <div class="page form" id="settings"></div>
   </section>
 </main>
+<div id="send-files" class="overlay" hidden>
+  <form class="dialog" id="send-form" role="dialog" aria-modal="true" aria-labelledby="send-title">
+    <div class="dialog-head"><span id="send-title"></span><button type="button" class="link" id="send-more">Добавить ещё</button></div>
+    <div id="send-list" class="send-list"></div>
+    <textarea id="send-caption" rows="1" placeholder="Подпись: что сделать с файлом (можно не писать)"></textarea>
+    <div class="dialog-foot"><button type="button" class="link" id="send-cancel">Отмена</button><button type="submit" class="btn primary act" id="send-ok">Отправить</button></div>
+  </form>
+</div>
 </div>
 <script src="app.js"></script>
 </body>

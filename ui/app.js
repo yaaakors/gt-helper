@@ -165,12 +165,36 @@ function addMessages(list) {
   scrollChat();
 }
 let busy = false;
-let attached = []; // пути файлов, приложенных к следующему сообщению
-function drawAttached() {
-  const box = $('#attach-list'); box.textContent = '';
-  attached.forEach((p, i) => box.append(fileChip(p.split(/[\\/]/).pop(), () => { attached.splice(i, 1); drawAttached(); })));
+// Окно отправки файлов, как в Telegram: файл бросили — открылось окно с ним и полем для подписи.
+let pending = []; // файлы в окне: {name, path, kind, thumb, size}
+const sizeText = (n) => (n > 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + ' МБ' : Math.max(1, Math.round(n / 1024)) + ' КБ');
+function drawPending() {
+  const box = $('#send-list'); box.textContent = '';
+  if (!pending.length) return closeSend();
+  const n = pending.length; const pics = pending.every((f) => f.kind === 'image');
+  $('#send-title').textContent = n === 1 ? (pics ? 'Отправить картинку' : 'Отправить файл') : `Отправить файлов: ${n}`;
+  pending.forEach((f, i) => {
+    const rm = el('button', { type: 'button', class: 'rm', 'aria-label': 'Убрать ' + f.name, title: 'Убрать', text: '×', onclick: () => { pending.splice(i, 1); drawPending(); if (pending.length) $('#send-caption').focus(); } });
+    if (f.thumb) box.append(el('div', { class: 'send-item pic' }, el('img', { src: f.thumb, alt: f.name }), el('div', { class: 'cap', text: `${f.name} · ${sizeText(f.size)}` }), rm));
+    else { const dot = f.name.lastIndexOf('.'); box.append(el('div', { class: 'send-item' }, el('span', { class: 'doc', text: dot > 0 ? f.name.slice(dot + 1).slice(0, 4) : 'файл' }), el('div', { class: 'meta' }, el('div', { text: f.name, title: f.name }), el('small', { text: sizeText(f.size) })), rm)); }
+  });
 }
-function attach(paths) { for (const p of paths) if (p && !attached.includes(p)) attached.push(p); drawAttached(); $('#chat-input').focus(); }
+async function attach(paths) {
+  paths = paths.filter(Boolean); if (!paths.length) return;
+  const info = await api.files.info(paths);
+  for (const f of info) if (!pending.some((x) => x.path === f.path)) pending.push(f);
+  if (!pending.length) return;
+  const cap = $('#send-caption');
+  if ($('#send-files').hidden) { cap.value = input.value; input.value = ''; grow(); $('#send-files').hidden = false; } // уже набранный текст становится подписью
+  drawPending(); cap.focus();
+}
+function closeSend(keepText) { if (keepText && !input.value) { input.value = $('#send-caption').value; grow(); } pending = []; $('#send-files').hidden = true; $('#send-caption').value = ''; input.focus(); }
+$('#send-form').addEventListener('submit', (e) => { e.preventDefault(); if (!pending.length || busy) return; const files = pending.map((f) => f.path); const text = $('#send-caption').value; closeSend(); send(text, files); });
+$('#send-cancel').addEventListener('click', () => closeSend(true));
+$('#send-more').addEventListener('click', async () => attach(await api.files.pick()));
+$('#send-caption').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#send-form').requestSubmit(); } });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#send-files').hidden) closeSend(true); });
+$('#send-files').addEventListener('mousedown', (e) => { if (e.target === e.currentTarget) closeSend(true); });
 async function send(text, files) {
   text = text.trim(); files = files || [];
   if ((!text && !files.length) || busy) return;
@@ -188,21 +212,24 @@ const input = $('#chat-input');
 function grow() { input.style.height = 'auto'; input.style.height = Math.min(160, input.scrollHeight + 2) + 'px'; }
 input.addEventListener('input', grow);
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#composer').requestSubmit(); } });
-$('#composer').addEventListener('submit', (e) => { e.preventDefault(); const t = input.value; if ((!t.trim() && !attached.length) || busy) return; const files = attached; attached = []; drawAttached(); input.value = ''; grow(); send(t, files); });
+$('#composer').addEventListener('submit', (e) => { e.preventDefault(); const t = input.value; if (!t.trim() || busy) return; input.value = ''; grow(); send(t); });
 // приложить файл: скрепка, перетаскивание в окно чата, вставка из буфера
 $('#chat-attach').addEventListener('click', async () => attach(await api.files.pick()));
 {
-  const view = $('#view-chat'); let depth = 0;
+  const view = $('#view-chat'); const zone = document.body; let depth = 0;
   const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
-  view.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; view.classList.add('dropping'); });
-  view.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
-  view.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) view.classList.remove('dropping'); });
-  view.addEventListener('drop', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; view.classList.remove('dropping'); attach([...e.dataTransfer.files].map((f) => api.files.pathOf(f))); });
-  input.addEventListener('paste', async (e) => {
+  const chatOn = () => view.classList.contains('on');
+  zone.addEventListener('dragenter', (e) => { if (!hasFiles(e) || !chatOn()) return; e.preventDefault(); depth++; view.classList.add('dropping'); });
+  zone.addEventListener('dragover', (e) => { if (hasFiles(e) && chatOn()) e.preventDefault(); });
+  zone.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) view.classList.remove('dropping'); });
+  zone.addEventListener('drop', (e) => { if (!hasFiles(e) || !chatOn()) return; e.preventDefault(); depth = 0; view.classList.remove('dropping'); attach([...e.dataTransfer.files].map((f) => api.files.pathOf(f))); });
+  const onPaste = async (e) => {
     const files = [...(e.clipboardData?.files || [])]; if (!files.length) return;
     e.preventDefault();
-    for (const f of files) attach([api.files.pathOf(f) || await api.files.paste(f.name, await f.arrayBuffer())]);
-  });
+    const paths = []; for (const f of files) paths.push(api.files.pathOf(f) || await api.files.paste(f.name, await f.arrayBuffer()));
+    attach(paths);
+  };
+  input.addEventListener('paste', onPaste); $('#send-caption').addEventListener('paste', onPaste);
 }
 $('#chat-help').addEventListener('click', () => send('помощь'));
 $('#chat-clear').addEventListener('click', async () => { await api.chat.clear(); chatBox.textContent = ''; planNodes.clear(); welcome(false); });
