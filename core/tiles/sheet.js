@@ -19,6 +19,7 @@ const FIELDS = [
   ['pcs', (h) => h.startsWith('шт в упаков')], ['m2pack', (h) => h.startsWith('м² в упаков') || h.startsWith('м2 в упаков')], ['w1', (h) => h.startsWith('вага 1 м')],
   ['wpack', (h) => h.startsWith('вага упаковки')], ['packsPal', (h) => h.startsWith('упаковок на палет')], ['m2pal', (h) => h.startsWith('м² на палет') || h.startsWith('м2 на палет')],
   ['wpal', (h) => h.startsWith('вага палет')],
+  ['packNote', (h) => h.startsWith('упаковка: прим')],
 ];
 const NUMERIC = new Set(['thickness', 'pei', 'year', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal']);
 // Поля, где значение должно быть из уже существующих в файле

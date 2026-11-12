@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   journal: { list: call('journal:list'), add: call('journal:add'), open: call('journal:open') },
   settings: { get: call('settings:get'), status: call('settings:status'), set: call('settings:set'), pick: call('settings:pick'), checkAi: call('settings:checkAi'), clearKey: call('settings:clearKey') },
   files: { info: call('files:info'), pick: call('files:pick'), paste: call('files:paste'), pathOf: (file) => { try { return webUtils.getPathForFile(file); } catch { return ''; } } },
+  db: { info: call('db:info'), import: call('db:import'), export: call('db:export') },
   gsScript: call('gs:script'),
   copy: call('clipboard:write'), open: call('shell:open'),
   update: { check: call('update:check'), download: call('update:download'), install: call('update:install'), on: (fn) => ipcRenderer.on('update', (_e, s) => fn(s)) },

@@ -84,7 +84,7 @@ async function status() {
   if (source.configured(store)) {
     try {
       const m = await source.load(store);
-      out.sheet = { ok: true, text: source.isGoogle(store) ? `подключена: «${m.docName}», лист «${m.sheetName}», артикулов — ${m.rows.length}` : `прочитан: лист «${m.sheetName}», артикулов — ${m.rows.length}` };
+      out.sheet = { ok: true, text: source.kind(store) === 'db' ? `база: артикулов — ${m.rows.length}, коллекций — ${new Set(m.rows.map((r) => r.collection)).size}` : source.isGoogle(store) ? `подключена: «${m.docName}», лист «${m.sheetName}», артикулов — ${m.rows.length}` : `прочитан: лист «${m.sheetName}», артикулов — ${m.rows.length}` };
       if (source.isGoogle(store) && m.scriptVersion < gsheet.SCRIPT_VERSION) out.sheet = { ok: false, text: 'В таблице старая версия скрипта — скопируйте скрипт заново и обновите развёртывание' };
     } catch (e) { out.sheet = { ok: false, text: String(e.message || e) }; }
   }
@@ -205,6 +205,23 @@ function handlers() {
       return { ok: true, text: `Ключ работает, доступно моделей: ${models.length}.` + (has ? '' : ` Модели «${store.get('geminiModel')}» в списке нет — выберите другую.`), models: has ? [] : models.filter((m) => /flash/i.test(m)).slice(0, 12) };
     } catch (e) { return { ok: false, text: 'Не получилось: ' + (e.message || e) }; }
   });
+  // ---------- база ----------
+  h('db:info', () => { const d = source.db(store); return { count: d.count(), imported: d.meta('imported'), file: d.file }; });
+  h('db:import', async (from) => {
+    const d = source.db(store);
+    if (d.count()) throw new Error('В базе уже есть данные — перенос делается один раз');
+    const m = await source.loadFrom(store, from);
+    const n = d.importModel(m, 'Вит', from === 'google' ? 'перенос из Google Таблицы' : 'перенос из Excel');
+    d.backup(store.file('backups'));
+    store.set({ source: 'db' });
+    return { count: n };
+  });
+  h('db:export', async () => {
+    const d = new Date(); const name = `Характеристики из базы ${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.xlsx`;
+    const r = await dialog.showSaveDialog(win, { defaultPath: path.join(app.getPath('documents'), name), filters: [{ name: 'Excel', extensions: ['xlsx'] }] });
+    if (r.canceled || !r.filePath) return null;
+    await source.db(store).exportXlsx(r.filePath); shell.showItemInFolder(r.filePath); return r.filePath;
+  });
   h('gs:script', () => {
     if (!store.get('gsToken')) store.set({ gsToken: crypto.randomBytes(24).toString('hex') });
     clipboard.writeText(gsheet.script(store.get('gsToken'), fs.readFileSync(path.join(__dirname, 'google', 'Code.gs'), 'utf8')));
@@ -243,7 +260,8 @@ app.whenReady().then(() => {
   process.on('uncaughtException', (e) => journal.add('error', String(e.message || e), { stack: String(e.stack || '').split('\n').slice(0, 5) }));
   process.on('unhandledRejection', (e) => journal.add('error', String((e && e.message) || e)));
   handlers(); createWindow(); setupUpdater();
-  setTimeout(() => { folders.index(store.get('catalogRoot')).catch(() => {}); }, 1500); // заранее читаем список папок каталога, чтобы первый ответ не ждал сеть
+  setTimeout(() => { folders.index(store.get('catalogRoot')).catch(() => {}); }, 1500);
+  if (source.kind(store) === 'db') { try { source.db(store).backup(store.file('backups')); } catch (e) { journal.add('error', 'Копия базы: ' + (e.message || e)); } } // копия базы при запуске (одна на день)
 });
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 app.on('window-all-closed', () => app.quit());

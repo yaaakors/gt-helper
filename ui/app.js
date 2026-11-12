@@ -438,9 +438,29 @@ async function renderSettings(data, recheck = true) {
   };
   // источник характеристик: Excel-файл или Google Таблица
   const src = el('div', { class: 'seg' });
-  for (const [id, label] of [['excel', 'Excel-файл'], ['google', 'Google Таблица']]) src.append(el('button', { class: s.source === id ? 'on' : '', text: label, onclick: () => save({ source: id }) }));
+  for (const [id, label] of [['excel', 'Excel-файл'], ['google', 'Google Таблица'], ['db', 'База']]) src.append(el('button', { class: s.source === id ? 'on' : '', text: label, onclick: () => save({ source: id }) }));
   const tile = el('div', { class: 'group' }, el('div', { class: 'cap', text: 'Плитка' }), el('div', { class: 'f' }, el('label', { text: 'Характеристики' }), el('div', {}, src)));
-  if (s.source === 'google') {
+  if (s.source === 'db') {
+    const box = el('div', { class: 'ctl' }); const hint = el('div', { class: 'hint', text: 'Читаю базу…' });
+    tile.append(el('div', { class: 'f' }, el('label', { text: 'База' }), box, hint,
+      el('div', { class: 'hint', text: 'База хранит связи (коллекции, артикулы, упаковка) и историю каждого изменения. Сейчас она лежит у вас в папке данных; когда будет сервер, переедет туда. Google Таблица и Excel после переноса — только для выгрузки и обмена (технолог): правки, сделанные прямо в таблице, в базу не попадут.' })));
+    api.db.info().then((d) => {
+      if (d.count) {
+        hint.className = 'hint ok'; hint.textContent = `✓ артикулов — ${d.count}` + (d.imported ? `, перенесено ${dmy(d.imported)}` : '');
+        box.append(el('button', { class: 'btn', text: 'Выгрузить в Excel', onclick: () => api.db.export() }));
+      } else {
+        hint.className = 'hint bad'; hint.textContent = 'База пока пустая. Перенесите в неё данные — один раз:';
+        const run = (from) => async (e) => {
+          box.querySelectorAll('button').forEach((b) => (b.disabled = true)); e.target.textContent = 'Переношу…';
+          try { const r = await api.db.import(from); flashSaved(); lastStatus = null; renderSettings(undefined, true); hint.textContent = `✓ перенесено артикулов — ${r.count}`; }
+          catch (err) { hint.textContent = 'Не получилось: ' + err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''); box.querySelectorAll('button').forEach((b) => (b.disabled = false)); e.target.textContent = 'Повторить'; }
+        };
+        if (s.gsUrl) box.append(el('button', { class: 'btn primary act', text: 'Перенести из Google Таблицы', onclick: run('google') }));
+        if (s.sheetPath) box.append(el('button', { class: 'btn', text: 'Перенести из Excel-файла', onclick: run('excel') }));
+        if (!s.gsUrl && !s.sheetPath) hint.textContent = 'База пока пустая. Сначала подключите Google Таблицу или Excel-файл — из них данные переносятся в базу.';
+      }
+    });
+  } else if (s.source === 'google') {
     const url = el('input', { type: 'text', class: 'grow', value: s.gsUrl || '', spellcheck: 'false', placeholder: 'https://script.google.com/macros/s/…/exec' });
     url.addEventListener('change', () => save({ gsUrl: url.value }));
     const copyBtn = el('button', { class: 'btn', text: 'Скопировать скрипт', onclick: async () => { await api.gsScript(); copyBtn.textContent = 'Скопировано'; setTimeout(() => (copyBtn.textContent = 'Скопировать скрипт'), 1500); } });

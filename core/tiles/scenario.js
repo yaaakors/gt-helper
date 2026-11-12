@@ -420,10 +420,10 @@ class TileChat {
       try {
         if (plan.mode === 'add') {
           const r = await source.addRows(this.store, plan.raw, backupDir);
-          results.push({ ok: true, text: `${plan.target}: добавлено строк — ${r.rows.length} (строки ${r.rows.join(', ')}). Проверено повторным чтением.`, note: 'Копия до изменения: ' + r.backup });
+          results.push(r.backup ? { ok: true, text: `${plan.target}: добавлено строк — ${r.rows.length} (строки ${r.rows.join(', ')}). Проверено повторным чтением.`, note: 'Копия до изменения: ' + r.backup } : { ok: true, text: `${plan.target}: добавлено артикулов — ${r.rows.length} (${r.rows.join(', ')}). Изменение записано в историю.` });
         } else {
           const r = await source.updateRows(this.store, plan.changes, backupDir);
-          results.push({ ok: true, text: `${plan.target}: изменено артикулов — ${plan.changes.length}. Проверено повторным чтением.`, note: 'Копия до изменения: ' + r.backup });
+          results.push(r.backup ? { ok: true, text: `${plan.target}: изменено артикулов — ${plan.changes.length}. Проверено повторным чтением.`, note: 'Копия до изменения: ' + r.backup } : { ok: true, text: `${plan.target}: изменено артикулов — ${plan.changes.length}. Было и стало записано в историю.` });
         }
         sheetOk = plan.sheetDone = true;
       } catch (e) {
