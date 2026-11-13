@@ -176,4 +176,4 @@ async function understand(text, model, ai) {
   if (local.intent === 'info' && intent === 'update') return Object.assign(local, { via: 'script' }); // вопрос — не правка
   return { intent, products, task: String((res && res.task) || ''), reply, what: (res && res.what) === 'renders' ? 'renders' : 'photo', via: 'ai' };
 }
-module.exports = { parseLocal, understand };
+module.exports = { parseLocal, understand, TM };

@@ -5,7 +5,7 @@ const sheet = require('./sheet');
 const source = require('./source');
 const folders = require('./folders');
 const path = require('path');
-const { understand, parseLocal } = require('./parse');
+const { understand, parseLocal, TM } = require('./parse');
 const filesLib = require('./files');
 
 const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'status', 'year', 'comment'];
@@ -50,6 +50,7 @@ class TileChat {
         if (used) return await this.advance();
         if (/^(отмена|отмени|стоп|не надо)$/iu.test(text)) { this.awaiting = null; this.draft = null; return [this.msg('Отменил, ничего не менялось.')]; }
         if (this.awaiting.key === 'article' && text.split(/\s+/).length <= 3) return [this.msg('Это не похоже на артикул: он пишется без пробелов и с цифрами, например FJ2580. Напишите артикул или выберите «без артикула».', { options: this.awaiting.options || [] })];
+        if (this.awaiting.quiet && text.split(/\s+/).length <= 3) return [this.msg(`Не понял бренд. Напишите один из: ${(this.awaiting.options || []).join(', ')} — или «отмена».`)];
         if (text.split(/\s+/).length <= 3) return [this.msg('Не нашёл такого варианта. Выберите кнопкой ниже или напишите «отмена».', { options: this.awaiting.options || [] })];
         this.awaiting = null; this.draft = null; // человек написал другое — начинаем заново
       }
@@ -105,10 +106,38 @@ class TileChat {
     return [this.msg((say || 'Эту команду я пока не умею выполнять.') + ' Записал в журнал разработчику — её добавят в обновлении.\n\nСейчас умею: добавить коллекцию или артикул, создать папки коллекции, дополнить данные артикула, показать данные и картинки по артикулу или коллекции, записать задачу. Напишите «помощь» для примеров.')];
   }
 
+  /** Какой бренд предложить: по коллекции (какого больше) и по формату (у каких брендов такой формат) */
+  brandGuess(model, p, known) {
+    const base = (tm) => String(tm || '').replace(/\s*\(.*\)\s*$/, '').trim();
+    const fk = (f) => String(f || '').toLowerCase().replace(/[^\d]+/g, 'x').replace(/^x|x$/g, '');
+    const fmt = fk(p.format);
+    const tally = (rows) => { const c = {}; for (const r of rows) { const b = base(r.tm); if (b) c[b] = (c[b] || 0) + 1; } return Object.entries(c).sort((a, b) => b[1] - a[1]); };
+    const all = [...new Set((model.vocab.tm || []).map(base).filter(Boolean))];
+    const or = (l) => (l.length > 1 ? l.slice(0, -1).join(', ') + ' или ' + l[l.length - 1] : l[0]);
+    if (known) {
+      const rows = model.rows.filter((r) => sheet.norm(r.collection) === sheet.norm(known.name));
+      const same = fmt ? rows.filter((r) => fk(r.format) === fmt) : [];
+      const t = tally(same.length ? same : rows); const list = t.map((x) => x[0]);
+      if (tally(rows).length === 1) return { sure: true, list, all };
+      const how = t.map((x) => `${x[0]} — ${x[1]}`).join(', ');
+      if (list.length === 1) return { list, all, text: `В коллекции ${known.name} формат ${p.format} есть только у ${list[0]}. Это ${list[0]}?` };
+      return { list, all, text: `В коллекции ${known.name} ${same.length ? 'с форматом ' + p.format : 'артикулов'}: ${how}. Это ${or(list)}?` };
+    }
+    const same = fmt ? model.rows.filter((r) => fk(r.format) === fmt) : [];
+    const t = tally(same).filter((x) => x[1] >= same.length * 0.15).slice(0, 3); const list = t.map((x) => x[0]);
+    if (!list.length) return { list, all, text: `Какой бренд у коллекции ${p.collection}? (${all.join(', ')})` };
+    if (list.length === 1) return { list, all, text: `Коллекция ${p.collection} новая. По формату ${p.format} это скорее ${list[0]}. Это ${list[0]}?` };
+    return { list, all, text: `Коллекция ${p.collection} новая. По формату ${p.format} это скорее ${or(list)}. Какой бренд?` };
+  }
   applyAnswer(text) {
     const a = this.awaiting; const low = text.toLowerCase();
     let value = null;
     if (a.options && a.options.length) value = a.options.find((o) => o.toLowerCase() === low) || null;
+    if (value === null && a.key === 'tm') {
+      const sq = (x) => x.toLowerCase().replace(/[^\p{L}\d]/gu, '');
+      if (a.yes && /^(да|ага|угу|верно|так|ок|ok|правильно|он|именно)[\s.!]*$/iu.test(low)) value = a.yes;
+      else value = ((TM.find(([k]) => low.includes(k)) || [])[1]) || (a.options || []).find((o) => sq(o) === sq(low)) || (a.options || []).filter((o) => sq(low).includes(sq(o))).sort((x, y) => y.length - x.length)[0] || null;
+    }
     if (a.key === 'article') {
       // «без артикула», «просто коллекцию», «нет» — значит нужны только папки
       if (value !== null || /^(без|нет|не надо|не нужен|пока нет|не знаю|только|просто|пропус)/iu.test(low)) { this.draft.foldersOnly = true; this.awaiting = null; return true; }
@@ -125,7 +154,7 @@ class TileChat {
   }
   ask(text, key, product, opts) {
     this.awaiting = Object.assign({ key, product }, opts || {});
-    return [this.msg((this.draft.note || '') + text, { options: this.awaiting.options || [] })];
+    return [this.msg((this.draft.note || '') + text, { options: this.awaiting.quiet ? [] : this.awaiting.options || [] })];
   }
 
   async advance() {
@@ -172,13 +201,12 @@ class TileChat {
       if (!p.collection) return this.ask(`Как называется коллекция${many ? ' для ' + p.article : ''}?`, 'collection', p, { free: true, all: !many || d.products.every((x) => !x.collection) });
       const known = model.collections.get(sheet.norm(p.collection));
       if (known) p.collection = known.name;
-      // бренд не угадываем: один бренд у коллекции — берём его, несколько — спрашиваем
-      if (!p.tm && known) {
-        const tms = Object.entries(known.tm).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
-        if (tms.length === 1) { p.tm = tms[0]; (p._auto = p._auto || {}).tm = 'как у коллекции'; }
-        else if (tms.length > 1) return this.ask(`В коллекции ${p.collection} есть артикулы нескольких брендов: ${tms.join(', ')}. Какой бренд у ${p.article || 'нового артикула'}?`, 'tm', p, { options: [...tms, ...(model.vocab.tm || []).filter((t) => !tms.includes(t))], all: true });
+      // бренд: один у коллекции — берём; иначе предлагаем по формату и по тому, какого бренда больше (текстом, без кнопок)
+      if (!p.tm) {
+        const g = this.brandGuess(model, p, known);
+        if (g.sure) { p.tm = g.list[0]; (p._auto = p._auto || {}).tm = 'как у коллекции'; }
+        else return this.ask(g.text, 'tm', p, { options: g.all, yes: g.list.length === 1 ? g.list[0] : null, quiet: true, all: true });
       }
-      if (!p.tm) return this.ask(`Какой бренд (ТМ) у коллекции ${p.collection}? От него зависит папка на сети.`, 'tm', p, { options: model.vocab.tm || [], all: true });
       for (const pr of this.normalize(model, p)) {
         const first = String(pr.value).toLowerCase().slice(0, 3);
         const close = pr.list.filter((v) => v.toLowerCase().includes(first));
@@ -343,9 +371,9 @@ class TileChat {
     if (known) {
       p.collection = known.name;
       if (!p.tm) {
-        const tms = Object.entries(known.tm).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
-        if (tms.length === 1) p.tm = tms[0];
-        else if (tms.length > 1) return this.ask(`В коллекции ${p.collection} есть артикулы нескольких брендов: ${tms.join(', ')}. Для какого бренда папки?`, 'tm', p, { options: tms, all: true });
+        const g = this.brandGuess(model, p, known);
+        if (g.sure) p.tm = g.list[0];
+        else return this.ask(g.text, 'tm', p, { options: g.all, yes: g.list.length === 1 ? g.list[0] : null, quiet: true, all: true });
       }
     }
     const fp = await this.folderPlan([p]);
