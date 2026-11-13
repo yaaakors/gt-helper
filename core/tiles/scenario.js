@@ -77,8 +77,9 @@ class TileChat {
       // коллекция названа кириллицей или с опечаткой, а такая уже есть — берём существующую
       for (const p of u.products || []) {
         if (!p.collection || model.collections.has(sheet.norm(p.collection))) continue;
-        const hit = names.resolve(p.collection, [...model.collections.values()].map((c) => c.name));
-        if (hit) { note += `«${p.collection}» понял как коллекцию ${hit}. `; p.collection = hit; }
+        const lab = names.labels([...model.collections.values()].map((c) => c.name));
+        const hit = lab.get(names.resolve(p.collection, [...lab.keys()]));
+        if (hit) { if (names.main(hit).toLowerCase() !== p.collection.toLowerCase()) note += `«${p.collection}» понял как коллекцию ${hit}. `; p.collection = hit; }
       }
       // заводской код «FJ2580» → артикул характеристик «FJ258» (последний знак — сорт)
       for (const p of u.products || []) {
@@ -187,7 +188,7 @@ class TileChat {
     for (const key of sheet.CLOSED) {
       if (!p[key] || (p._skipped && p._skipped[key])) continue;
       const list = key === 'color' && Object.keys(model.colors).length ? Object.keys(model.colors) : (model.vocab[key] || []);
-      const hit = list.find((v) => v.toLowerCase() === String(p[key]).toLowerCase());
+      const hit = names.pick(p[key], list); // точное, без скобок («тауп») или на слух («бьянко»)
       if (hit) p[key] = hit; else problems.push({ key, value: p[key], list });
     }
     return problems;
@@ -319,13 +320,14 @@ class TileChat {
 
   /** Картинки из чата → план «скопировать в папку коллекции» (Faces / Рендери / Живі фото та відео) */
   async planImages(model, text, files) {
+    this.model = model;
     const low = String(text || '').toLowerCase();
     const sub = /фейс|face|лиц/iu.test(low) ? folders.SUBDIRS[0] : /рендер|визуал|візуал|интерьер|інтер/iu.test(low) ? folders.SUBDIRS[1] : /жив|видео|відео|фото/iu.test(low) ? folders.SUBDIRS[2] : null;
     // коллекция: самое длинное название из характеристик, которое есть в подписи
     const sq = (x) => sheet.norm(x).replace(/[^\p{L}\d]/gu, '');
     let coll = null;
     for (const c of model.collections.values()) if (sq(c.name).length >= 3 && sq(low).includes(sq(c.name)) && (!coll || c.name.length > coll.name.length)) coll = c;
-    if (!coll) { const hit = names.find(text, [...model.collections.values()].map((c) => c.name)); if (hit) coll = model.collections.get(sheet.norm(hit)); }
+    if (!coll) { const lab = names.labels([...model.collections.values()].map((c) => c.name)); let hit = null; for (const k of lab.keys()) if (k.length >= 4 && sq(low).includes(sq(k)) && (!hit || k.length > hit.length)) hit = k; hit = hit || names.find(text, [...lab.keys()]); if (hit) coll = model.collections.get(sheet.norm(lab.get(hit))); }
     // второе название, которого нет в характеристиках (например, выведенное) — берём основную коллекцию
     if (!coll) for (const t of this.twins()) if (sq(low).includes(sq(t.name))) coll = model.collections.get(sheet.norm(t.base)) || { name: t.base, tm: {} };
     if (!sub || !coll) {
@@ -344,7 +346,7 @@ class TileChat {
     const dir = path.join(found.dir, sub);
     // имя файла: вместо второго названия (Denver) — основное название коллекции (Kassel)
     const target = viaBase || coll.name;
-    const alias = [...new Set([coll.name, ...this.twins().filter((t) => sheet.norm(t.base) === sheet.norm(target)).map((t) => t.name)])].filter((n) => sheet.norm(n) !== sheet.norm(target));
+    const alias = [...new Set([coll.name, names.main(coll.name), ...this.twins().filter((t) => sheet.norm(t.base) === sheet.norm(target)).map((t) => t.name)])].filter((n) => sheet.norm(n) !== sheet.norm(target));
     // Имя файла: характеристики через «_», слова внутри одной характеристики — через пробел:
     // «Denver_light_grey_1200x600_fr1.jpg» → «Kassel_light grey_1200x600_fr1.jpg», подпапка «1200х600_light grey»
     const subs = sub === folders.SUBDIRS[0] ? ((await folders.subdirs(dir)) || []) : [];
@@ -395,16 +397,27 @@ class TileChat {
   }
 
   /** Вторые названия коллекций для других рынков: Denver = Kassel (Польша). Список — twins.json в папке данных */
-  twins() { return this.store.read('twins.json', TWINS); }
+  twins() {
+    const file = this.store.read('twins.json', TWINS); const out = [];
+    // из характеристик: коллекция записана как «Denver (Kassel)» — значит Denver это второе название Kassel
+    for (const c of (this.model ? this.model.collections.values() : [])) {
+      const m = /^(.+?)\s*\((.+)\)\s*$/.exec(c.name); if (!m) continue;
+      const known = file.find((x) => sheet.norm(x.name) === sheet.norm(m[1]));
+      out.push({ name: m[1].trim(), full: c.name, base: m[2].trim(), market: known ? known.market : '', old: known ? known.old : false });
+    }
+    for (const x of file) if (!out.some((o) => sheet.norm(o.name) === sheet.norm(x.name))) out.push(x);
+    return out;
+  }
   /** Основная коллекция для второго названия (или null) */
-  baseOf(collection) { const k = sheet.norm(collection); const t = this.twins().find((x) => sheet.norm(x.name) === k); return t ? t.base : null; }
+  baseOf(collection) { const k = sheet.norm(names.main(collection)); const t = this.twins().find((x) => sheet.norm(x.name) === k); return t ? t.base : null; }
   /** Строка для карточки: «Другое название: …» */
   twinLine(collection) {
-    const k = sheet.norm(collection); const all = this.twins();
+    const k = sheet.norm(names.main(collection)); const all = this.twins();
     const up = all.find((x) => sheet.norm(x.name) === k);
-    if (up) return `Это коллекция ${up.base} под названием для рынка: ${up.market}.` + (up.old ? ' Название выведено.' : '');
+    if (up) return `Это коллекция ${up.base} под другим названием${up.market ? ' — для рынка: ' + up.market : ''}.` + (up.old ? ' Название выведено.' : '');
     const down = all.filter((x) => sheet.norm(x.base) === k);
-    return down.length ? 'Другие названия: ' + down.map((x) => `${x.name} (${x.market}${x.old ? ', выведено' : ''})`).join(', ') + '.' : '';
+    const tag = (x) => [x.market, x.old ? 'выведено' : ''].filter(Boolean).join(', ');
+    return down.length ? 'Другие названия: ' + down.map((x) => x.name + (tag(x) ? ` (${tag(x)})` : '')).join(', ') + '.' : '';
   }
 
   /** Где лежит папка коллекции (если каталог доступен). У второго названия своей папки может не быть — тогда папка основной */

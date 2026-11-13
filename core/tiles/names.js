@@ -63,4 +63,18 @@ function find(text, names) {
   return best ? best.name : null;
 }
 
-module.exports = { phon, resolve, find };
+/** Название без пояснения в скобках: «Denver (Kassel)» → «Denver», «тауп (сіро-бежевий)» → «тауп» */
+const main = (n) => String(n || '').replace(/\s*\(.*\)\s*$/, '').trim();
+/** Как можно назвать каждое значение: полностью или без скобок. Возвращает Map «как назвали» → «как записано» */
+function labels(list) { const m = new Map(); for (const n of list) m.set(n, n); for (const n of list) if (main(n) && main(n) !== n && !m.has(main(n))) m.set(main(n), n); return m; }
+/** Значение справочника по слову человека: точное, без скобок или «на слух» (бьянко → б'янко (білий)) */
+function pick(word, list) {
+  const w = String(word || '').toLowerCase().trim(); if (!w) return null;
+  const exact = list.find((v) => v.toLowerCase() === w); if (exact) return exact;
+  const lab = labels(list);
+  for (const [k, v] of lab) if (k.toLowerCase() === w) return v;
+  for (const [k, v] of lab) if (k !== v && phon(k).length >= 4 && phon(k) === phon(w)) return v;
+  return null;
+}
+
+module.exports = { phon, resolve, find, main, labels, pick };

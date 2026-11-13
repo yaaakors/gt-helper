@@ -93,7 +93,9 @@ function parseLocal(text, model) {
   else if (near && !/^(не|пока|позже|потом|буде|будет)/iu.test(near[1])) f.color = near[1].split(/\s+/)[0].toLowerCase(); // незнакомый цвет — спросим
   // дизайн
   const dz = /(?:дизайн\p{L}*|под|п[іи]д|имитаци\p{L}*)\s*[:—-]?\s*([\p{L}-]+)/iu.exec(t);
-  const design = dz && byStem(dz[1], DESIGN); if (design) f.design = design;
+  // сначала — значения с пояснением в скобках из характеристик: «гранит» → «граніт (камінь)»
+  const dzOwn = dz && model && names.pick(dz[1], (model.vocab.design || []).filter((v) => /\(/.test(v) && !/,/.test(v)));
+  const design = dzOwn || (dz && byStem(dz[1], DESIGN)); if (design) f.design = design;
   // бренд
   for (const [k, v] of TM) if (low.includes(k)) { f.tm = v; break; }
   if (model) for (const tm of model.vocab.tm || []) if (low.includes(tm.toLowerCase()) && (!f.tm || tm.length > f.tm.length)) f.tm = tm;
@@ -105,14 +107,16 @@ function parseLocal(text, model) {
 
   // название коллекции без слова «коллекция» — если такая уже есть в характеристиках
   if (!f.collection && model) {
+    // коллекцию можно назвать полностью или без скобок: «Denver» = «Denver (Kassel)»
+    const lab = names.labels([...model.collections.values()].map((c) => c.name));
     let best = '';
-    for (const c of model.collections.values()) {
-      if (c.name.length < 4 || c.name.length <= best.length) continue;
-      if (new RegExp('(?<![\\p{L}\\d])' + c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\d])', 'iu').test(t)) best = c.name;
+    for (const k of lab.keys()) {
+      if (k.length < 4 || k.length <= best.length) continue;
+      if (new RegExp('(?<![\\p{L}\\d])' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\d])', 'iu').test(t)) best = k;
     }
-    if (best) f.collection = best;
-    // название кириллицей («калаката экстра») или в чужой раскладке
-    else { const byEar = names.find(t, [...model.collections.values()].map((c) => c.name)); if (byEar) f.collection = byEar; }
+    if (best) f.collection = lab.get(best);
+    // название кириллицей («калаката экстра») или в чужой раскладке; слова после «цвет», «дизайн» — не коллекция
+    else { const byEar = names.find(t.replace(/(дизайн\p{L}*|цвет\p{L}*|кол[іь]р\p{L}*|под|п[іи]д)\s*[:—-]?\s*[\p{L}'’-]+/giu, ' '), [...lab.keys()]); if (byEar) f.collection = lab.get(byEar); }
   }
   // вопрос: «что есть по ON099?», «покажи коллекцию Fjord Rock»
   const ask = /^\s*(что|шо|покажи|показать|найди|инф|данные|расскажи|есть ли|какой|какая|какие|сколько|ск[іи]льки|где|де|як[іи]й)(?![\p{L}])|\?\s*$/iu.test(text);
