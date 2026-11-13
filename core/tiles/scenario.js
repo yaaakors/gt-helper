@@ -612,7 +612,7 @@ class TileChat {
       }
       const where = [...new Set(plan.items.map((i) => path.join(plan.dir, i.folder || '')))];
       if (done) { results.unshift({ ok: true, text: `Сохранено файлов — ${done}: ${where.join(', ')}`, open: where[0] }); folders.reset(); }
-      if (optimized) results.push({ ok: true, text: `Оптимизировано — ${optimized}: было ${imagesLib.sizeText(before)}, стало ${imagesLib.sizeText(after)}. Размер в пикселях и плотность не менялись.` });
+      if (optimized) results.push({ ok: true, text: `Оптимизировано — ${optimized}: было ${imagesLib.sizeText(before)}, стало ${imagesLib.sizeText(after)}. Качество, размер в пикселях и плотность не менялись.` });
       for (const [note, list] of notes) results.push({ ok: null, text: `${list.length > 3 ? list.slice(0, 3).join(', ') + ` и ещё ${list.length - 3}` : list.join(', ')}: ${note}.` });
       if ([...notes.keys()].some((n) => /недоступна|не смог|не прошла/.test(n))) this.journal.add('failed', 'Оптимизация картинок', { notes: [...notes.entries()] });
       if (skipped) results.push({ ok: null, text: `Пропущено — ${skipped}: файлы с такими именами там уже лежат, не заменял.` });

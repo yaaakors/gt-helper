@@ -1,4 +1,5 @@
-// Оптимизация картинок при раскладке по папкам: убрать служебные данные, перевести в sRGB, пережать.
+// Оптимизация картинок при раскладке по папкам: убрать служебные данные, при необходимости перевести в sRGB.
+// Качество не теряется: обычный JPEG не пережимается (вырезаются только служебные блоки), PNG/WebP — без потерь.
 // Размер в пикселях и плотность (dpi) не меняются. Исходный файл не трогаем.
 'use strict';
 const fs = require('fs');
@@ -20,6 +21,35 @@ function setJpegDpi(buf, dpi) {
   return Buffer.concat([buf.subarray(0, 2), head, buf.subarray(2)]);
 }
 
+/** Профиль — обычный sRGB? (тогда его можно просто убрать, цвета не изменятся) */
+function isSrgbProfile(icc) {
+  if (!icc || icc.length < 132) return true;
+  const t = icc.toString('latin1').replace(/\0/g, '');
+  return /srgb|iec61966-2[.-]1/i.test(t) && !/adobe|display p3|prophoto|cmyk|fogra|coated/i.test(t);
+}
+
+/**
+ * JPEG без пережатия: вырезаем служебные блоки, сама картинка (сжатые данные) остаётся байт в байт.
+ * Оставляем то, без чего картинка покажется иначе: таблицы, кадр, APP0 (плотность), APP14 (Adobe, цвета),
+ * а EXIF — только если в нём записан поворот.
+ */
+function stripJpeg(buf, keepExif) {
+  if (buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  const parts = [buf.subarray(0, 2)]; let i = 2;
+  while (i + 4 <= buf.length) {
+    if (buf[i] !== 0xff) return null;
+    const m = buf[i + 1];
+    if (m === 0xff) { i++; continue; }
+    if (m === 0xda) { parts.push(buf.subarray(i)); return Buffer.concat(parts); } // начались данные картинки — дальше всё как есть
+    const len = buf.readUInt16BE(i + 2); const seg = buf.subarray(i, i + 2 + len);
+    if (i + 2 + len > buf.length) return null;
+    const drop = (m >= 0xe1 && m <= 0xef && m !== 0xee && !(m === 0xe1 && keepExif && seg.toString('latin1', 4, 8) === 'Exif')) || m === 0xfe;
+    if (!drop) parts.push(seg);
+    i += 2 + len;
+  }
+  return null;
+}
+
 /**
  * Положить картинку src в dest (dest не должен существовать).
  * Возвращает { before, after, mode: 'optimized' | 'kept' | 'copied', note }.
@@ -32,29 +62,39 @@ async function save(src, dest, opts) {
   if (!kind) return plain('copied', 'этот вид файлов не оптимизирую');
   const S = sharp();
   if (!S) return plain('copied', 'оптимизация недоступна: ' + libError);
-  let meta; let buf;
+  let meta; let buf; let lossless = false;
   try {
     meta = await S(src, { failOn: 'none' }).metadata();
-    let p = S(src, { failOn: 'none' }).rotate(); // поворот из служебных данных применяем к самой картинке — иначе после очистки она «ляжет на бок»
-    if (kind === 'jpeg') p = p.jpeg({ quality: 85, mozjpeg: true });
-    else if (kind === 'png') p = p.png({ compressionLevel: 9, effort: 10 }); // без потерь
-    else p = p.webp({ quality: 85 });
-    buf = await p.toBuffer(); // служебные данные и цветовой профиль не переносятся; цвета пересчитаны в sRGB
+    const srgb = (meta.space === 'srgb' || meta.space === 'b-w') && isSrgbProfile(meta.icc);
+    if (kind !== 'jpeg' && /short|16/.test(String(meta.depth))) return plain('kept', '16 бит на канал — оставил как есть, чтобы не терять точность цвета');
+    if (kind === 'jpeg' && srgb) {
+      // обычный случай: качество не трогаем вообще — только убираем лишнее
+      buf = stripJpeg(fs.readFileSync(src), (meta.orientation || 1) > 1); lossless = !!buf;
+    }
+    if (!buf) {
+      // другой цветовой профиль (CMYK, Adobe RGB…) — без пересчёта цвета поменяются, поэтому пересчитываем в sRGB
+      // с максимальным качеством; PNG и WebP — без потерь
+      let p = S(src, { failOn: 'none' }).rotate();
+      if (kind === 'jpeg') p = p.jpeg({ quality: 95, chromaSubsampling: '4:4:4', mozjpeg: true });
+      else if (kind === 'png') p = p.png({ compressionLevel: 9, adaptiveFiltering: true, palette: false });
+      else p = p.webp({ lossless: true });
+      buf = await p.toBuffer();
+    }
   } catch (e) { return plain('copied', 'не смог обработать: ' + String(e.message || e).split('\n')[0]); }
   const dpi = (opts && opts.dpi) || meta.density || 0;
   if (kind === 'jpeg') buf = setJpegDpi(buf, dpi || 72);
-  const wasRgb = meta.space === 'srgb' || meta.space === 'b-w';
+  const wasRgb = (meta.space === 'srgb' || meta.space === 'b-w') && isSrgbProfile(meta.icc);
   // уже лёгкий файл в sRGB: пережатие ничего не даст, а качество тронет — кладём как есть
   if (wasRgb && !meta.icc && !meta.exif && !meta.xmp && !meta.iptc && buf.length >= before * 0.97 && !(opts && opts.dpi)) return plain('kept');
   if (wasRgb && buf.length >= before && !(opts && opts.dpi)) return plain('kept');
   fs.writeFileSync(dest, buf, { flag: 'wx' });
   // проверка: файл читается, размер в пикселях тот же
   try {
-    const out = await S(dest).metadata(); const turned = (meta.orientation || 1) >= 5;
+    const out = await S(dest).metadata(); const turned = !lossless && (meta.orientation || 1) >= 5;
     const w = turned ? meta.height : meta.width; const h = turned ? meta.width : meta.height;
     if (out.width !== w || out.height !== h) throw new Error(`размер в пикселях изменился: ${w}x${h} → ${out.width}x${out.height}`);
   } catch (e) { try { fs.unlinkSync(dest); } catch { /* не успел создаться */ } return plain('copied', 'проверка после оптимизации не прошла (' + String(e.message || e).split('\n')[0] + ') — положил исходный файл'); }
-  return { before, after: buf.length, mode: 'optimized', note: wasRgb ? '' : `цвета переведены в sRGB (было: ${String(meta.space).toUpperCase()})` };
+  return { before, after: buf.length, mode: 'optimized', note: wasRgb ? '' : `цвета переведены в sRGB (было: ${meta.space === 'srgb' ? 'другой RGB-профиль' : String(meta.space).toUpperCase()}) — пересохранено с максимальным качеством` };
 }
 
 const sizeText = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + ' МБ' : Math.max(1, Math.round(n / 1024)) + ' КБ');
