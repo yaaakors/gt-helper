@@ -41,7 +41,13 @@ function planCard(plan) {
   const choice = {}; const pick = {}; // выбор папки: куда класть коллекцию
   const draw = () => {
     card.textContent = '';
-    if (plan.mode !== 'update') {
+    if (plan.mode === 'files') {
+      const part = el('div', { class: 'part' }, el('h3', { text: `Картинки — скопировать в «${plan.sub}»` }), el('div', { class: 'path', text: plan.dir }));
+      for (const it of plan.items.slice(0, 30)) part.append(el('div', { class: 'note', text: it.name + (it.exists ? ' — уже есть там, пропущу' : '') }));
+      if (plan.items.length > 30) part.append(el('div', { class: 'more', text: `…и ещё файлов: ${plan.items.length - 30}` }));
+      part.append(el('div', { class: 'note', text: 'Исходные файлы не трогаю. Существующие в папке не заменяю.' }));
+      card.append(part);
+    } else if (plan.mode !== 'update') {
       if (plan.products.length) {
       const part = el('div', { class: 'part' }, el('h3', { text: (plan.target || 'Файл характеристик') + ' — добавить' }));
       for (const p of plan.products) {

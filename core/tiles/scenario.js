@@ -37,6 +37,8 @@ class TileChat {
     if (!text && !(files && files.length)) return [];
     try {
       if (files && files.length) { this.awaiting = null; this.draft = null; return await this.handleFiles(text, files); }
+      if (this.held && Date.now() - this.held.time < 15 * 60 * 1000 && !/^(отмена|отмени|стоп|не надо)$/iu.test(text) && text.split(/\s+/).length <= 8) { const h = this.held; this.held = null; if (source.configured(this.store)) return await this.planImages(await source.load(this.store), text, h.files); }
+      this.held = null;
       // кнопка «Добавить <артикул>» после проверки выпуска
       const pick = /^Добавить ([\p{L}\d]+)$/u.exec(text);
       if (pick && this.fresh && this.fresh.has(pick[1].toLowerCase())) return await this.addFromRelease(this.fresh.get(pick[1].toLowerCase()));
@@ -242,9 +244,10 @@ class TileChat {
   async handleFiles(text, files) {
     if (!source.configured(this.store)) return [this.msg('Сначала укажите в Настройках, где лежат характеристики: Excel-файл или Google Таблица.', { kind: 'warn' })];
     const model = await source.load(this.store);
-    const out = []; const releases = []; const packs = []; const other = [];
+    const out = []; const releases = []; const packs = []; const other = []; const images = [];
     for (const f of files) {
       const name = path.basename(f);
+      if (filesLib.kindOf(f) === 'image') { images.push(f); continue; }
       if (filesLib.kindOf(f) !== 'excel') { other.push(name); continue; }
       let grid;
       try { grid = filesLib.readGrid(f).grid; } catch (e) { out.push(this.msg(`Не смог прочитать «${name}»: ${e.message || e}`, { kind: 'bad' })); this.journal.add('failed', 'Чтение файла из чата', { name, error: String(e.message || e) }); continue; }
@@ -255,7 +258,7 @@ class TileChat {
       let checked = 0; const fresh = new Map();
       for (const r of releases) { const res = filesLib.releaseCheck(r.grid, model); checked += res.checked; for (const x of res.fresh) if (!fresh.has(x.article.toLowerCase())) fresh.set(x.article.toLowerCase(), x); }
       const head = `Проверил выпуск: файлов — ${releases.length}, строк первого сорта — ${checked}. `;
-      if (!fresh.size) out.push(this.msg(head + 'Новых артикулов нет — все уже есть в характеристиках.'));
+      if (!fresh.size) out.push(this.msg(head.trim(), { results: [{ ok: true, text: 'Новых артикулов нет — все уже есть в характеристиках.' }] }));
       else {
         this.fresh = fresh; const list = [...fresh.values()];
         out.push(this.msg(head + `Новых артикулов — ${list.length}:\n\n` + list.map((x) => `${x.collection} - ${x.article} - ${x.name}`).join('\n') + '\n\nМогу завести их в характеристики — нажмите кнопку, покажу план.', { options: list.slice(0, 12).map((x) => 'Добавить ' + x.article) }));
@@ -271,11 +274,43 @@ class TileChat {
       this.plans.set(plan.id, plan);
       out.push(this.msg(`Сверил упаковку по файлу «${pk.name}»: артикулов — ${d.matched}, с отличиями — ${d.changes.length}.` + tail + ' Вот что изменю:', { plan }));
     }
+    if (images.length) out.push(...await this.planImages(model, text, images));
     if (other.length) {
       this.journal.add('not_understood', text || '(файлы без подписи)', { files: other });
-      out.push(this.msg(`${other.length === 1 ? 'Файл' : 'Файлы'} ${other.map((n) => `«${n}»`).join(', ')} принял, но работать с такими пока не умею. Сейчас понимаю файлы выпуска плитки и файл упаковочных данных. Записал в журнал разработчику — добавят в обновлении.`));
+      out.push(this.msg(`${other.length === 1 ? 'Файл' : 'Файлы'} ${other.map((n) => `«${n}»`).join(', ')} принял, но работать с такими пока не умею. Сейчас понимаю файлы выпуска плитки, файл упаковочных данных и картинки (раскладываю по папкам коллекции). Записал в журнал разработчику — добавят в обновлении.`));
     }
     return out;
+  }
+
+  /** Картинки из чата → план «скопировать в папку коллекции» (Faces / Рендери / Живі фото та відео) */
+  async planImages(model, text, files) {
+    const low = String(text || '').toLowerCase();
+    const sub = /фейс|face|лиц/iu.test(low) ? folders.SUBDIRS[0] : /рендер|визуал|візуал|интерьер|інтер/iu.test(low) ? folders.SUBDIRS[1] : /жив|видео|відео|фото/iu.test(low) ? folders.SUBDIRS[2] : null;
+    // коллекция: самое длинное название из характеристик, которое есть в подписи
+    const sq = (x) => sheet.norm(x).replace(/[^\p{L}\d]/gu, '');
+    let coll = null;
+    for (const c of model.collections.values()) if (sq(c.name).length >= 3 && sq(low).includes(sq(c.name)) && (!coll || c.name.length > coll.name.length)) coll = c;
+    if (!sub || !coll) {
+      this.held = { files, time: Date.now() };
+      const what = !sub && !coll ? 'что это за картинки и для какой коллекции' : !sub ? 'что это за картинки: фейсы, рендеры или живые фото' : 'для какой коллекции (в подписи не нашёл названия из характеристик)';
+      return [this.msg(`Картинок принял — ${files.length}. Напишите, ${what}. Например: «фейсы в Kassel». Заново прикладывать не нужно.`)];
+    }
+    this.held = null;
+    const root = this.store.get('catalogRoot');
+    if (!root) return [this.msg('В Настройках не указана папка каталога на сети — положить картинки некуда.', { kind: 'warn' })];
+    const ix = await folders.index(root);
+    if (!ix) return [this.msg(`Сетевая папка сейчас недоступна (${root}). Попробуйте позже — картинки приложите ещё раз.`, { kind: 'bad' })];
+    const found = folders.find(ix, coll.name);
+    if (!found) return [this.msg(`У коллекции ${coll.name} ещё нет папки на сети. Сначала напишите «создай папки для ${coll.name}», потом приложите картинки ещё раз.`, { kind: 'warn' })];
+    const dir = path.join(found.dir, sub);
+    const have = new Set(((await folders.images(dir)) || []).map((n) => n.toLowerCase()));
+    const items = files.map((f) => ({ src: f, name: path.basename(f), exists: have.has(path.basename(f).toLowerCase()) }));
+    const plan = { id: uid(), mode: 'files', status: 'pending', warnings: [], dir, sub, collection: coll.name, items };
+    const brandsIn = Object.keys(coll.tm || {});
+    if (brandsIn.length > 1) plan.warnings.push(`У коллекции несколько брендов (${brandsIn.join(', ')}). Кладу в папку: ${found.parent}. Если нужна другая — скажите.`);
+    if (items.every((i) => i.exists)) { plan.status = 'done'; return [this.msg(`Все эти файлы уже лежат в папке ${dir} — копировать нечего.`)]; }
+    this.plans.set(plan.id, plan);
+    return [this.msg(`Понял. Вот что сделаю с картинками для ${coll.name}:`, { plan })];
   }
 
   /** Новый артикул из файла выпуска → обычный план добавления (данные берём из заводского названия) */
@@ -459,6 +494,29 @@ class TileChat {
     const plan = this.plans.get(planId);
     if (!plan || !['pending', 'failed'].includes(plan.status)) return [this.msg('Этот план уже не действует. Напишите команду заново.')];
     const results = []; const backupDir = this.store.file('backups');
+    if (plan.mode === 'files') {
+      const fs = require('fs');
+      try { fs.mkdirSync(plan.dir, { recursive: true }); } catch (e) { /* ниже будет понятная ошибка по каждому файлу */ }
+      let done = 0; let skipped = 0;
+      for (const it of plan.items) {
+        if (it.done) continue;
+        const dest = path.join(plan.dir, it.name);
+        try {
+          if (fs.existsSync(dest)) { skipped++; it.done = true; continue; }
+          fs.copyFileSync(it.src, dest, fs.constants.COPYFILE_EXCL);
+          if (fs.statSync(dest).size !== fs.statSync(it.src).size) throw new Error('размер копии не совпал с исходным');
+          it.done = true; done++;
+        } catch (e) {
+          results.push({ ok: false, text: `${it.name}: ${e.message || e}` });
+          this.journal.add('failed', 'Копирование картинки в папку коллекции', { file: it.name, dir: plan.dir, error: String(e.message || e) });
+        }
+      }
+      if (done) results.unshift({ ok: true, text: `Скопировано файлов — ${done}: ${plan.dir}`, open: plan.dir });
+      if (skipped) results.push({ ok: null, text: `Пропущено — ${skipped}: файлы с такими именами там уже лежат, не заменял.` });
+      const bad = results.some((r) => r.ok === false);
+      plan.status = bad ? 'failed' : 'done';
+      return [this.msg(bad ? 'Скопировал не всё. Исправьте причину и нажмите «Повторить» — уже скопированное не повторится.' : 'Готово. Исходные файлы остались на месте.', { results, kind: bad ? 'bad' : 'ok', planUpdate: { id: planId, status: plan.status } })];
+    }
     let sheetOk = plan.sheetDone === true || plan.mode === 'folders';
     if (!sheetOk) {
       try {
@@ -518,6 +576,7 @@ const HELP = [
   '• Дополнить или изменить данные:\n  «для FJ2580 PEI 4, R10» или сразу после добавления просто «PEI 4, R10, для пола»',
   '• Показать: «что есть по 89192», «покажи картинку 89192», «покажи визуализации по Alpina Wood»',
   '• Файлы: перетащите в чат файл выпуска плитки — проверю, нет ли новых артикулов; файл упаковочных данных — сверю и обновлю упаковку. К файлу можно дописать, что сделать.',
+  '• Картинки: перетащите в чат и подпишите «фейсы в Kassel», «рендеры в Kassel» или «живые фото в Kassel» — скопирую в нужную папку коллекции',
   '• Записать задачу:\n  «задача: отправить файл технологу #плитка»',
   'Перед любым изменением я показываю план. Без кнопки «Выполнить» ничего не меняется. Всё, что не понял или не смог, попадает в журнал разработчику.',
 ].join('\n\n');
