@@ -345,22 +345,27 @@ class TileChat {
     // имя файла: вместо второго названия (Denver) — основное название коллекции (Kassel)
     const target = viaBase || coll.name;
     const alias = [...new Set([coll.name, ...this.twins().filter((t) => sheet.norm(t.base) === sheet.norm(target)).map((t) => t.name)])].filter((n) => sheet.norm(n) !== sheet.norm(target));
-    const fix = (name) => { for (const a of alias) { const re = new RegExp('^' + a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s_-]+') + '(?=[\\s_.-])', 'i'); if (re.test(name)) return name.replace(re, target.replace(/\s+/g, '_')); } return name; };
-    // фейсы лежат в подпапках «формат_цвет» (1200х600_grey): берём формат и цвет из имени файла
+    // Имя файла: характеристики через «_», слова внутри одной характеристики — через пробел:
+    // «Denver_light_grey_1200x600_fr1.jpg» → «Kassel_light grey_1200x600_fr1.jpg», подпапка «1200х600_light grey»
     const subs = sub === folders.SUBDIRS[0] ? ((await folders.subdirs(dir)) || []) : [];
-    const xk = (v) => v.toLowerCase().replace(/[xх×]/g, 'x');
-    const place = (name) => {
-      if (sub !== folders.SUBDIRS[0]) return '';
-      const parts = name.replace(/\.[^.]+$/, '').split(/[_\s]+/).filter(Boolean);
-      const fi = parts.findIndex((t) => /^\d{2,4}[xхX×Х]\d{2,4}$/.test(t)); if (fi < 0) return null;
-      const nameLen = target.split(/\s+/).length;
-      const color = parts.filter((t, k) => k >= nameLen && k !== fi && !/^fr\d*$/i.test(t) && !/^\d+$/.test(t)).join('_'); if (!color) return null;
-      const want = parts[fi].replace(/[xX×Х]/g, 'х') + '_' + color;
-      return subs.find((d) => xk(d) === xk(want)) || want;
+    const xk = (v) => v.toLowerCase().replace(/[xх×]/g, 'x').replace(/[\s_]+/g, ' ');
+    const isFmt = (t) => /^\d{2,4}[xхX×Х]\d{2,4}$/.test(t); const isMark = (t) => /^fr\d*$/i.test(t) || /^\d+$/.test(t) || /^(main|closeup|ai)$/i.test(t);
+    const lead = [target, ...alias].sort((a, b) => b.length - a.length).map((n) => new RegExp('^' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s_-]+') + '(?=[\\s_.-]|$)', 'i'));
+    const read = (file) => {
+      const ext = path.extname(file); const stem = file.slice(0, file.length - ext.length);
+      const re = lead.find((r) => r.test(stem)); if (!re) return { name: file, folder: null };
+      const groups = []; let words = []; let format = ''; const colors = [];
+      const flush = () => { if (words.length) { groups.push(words.join(' ')); colors.push(words.join(' ')); words = []; } };
+      for (const t of stem.replace(re, '').split(/[_\s]+/).filter(Boolean)) {
+        if (isFmt(t)) { flush(); groups.push(t); format = format || t; } else if (isMark(t)) { flush(); groups.push(t); } else words.push(t);
+      }
+      flush();
+      const want = format && colors.length ? format.replace(/[xX×Х]/g, 'х') + '_' + colors[0] : null;
+      return { name: [target, ...groups].join('_') + ext, folder: want && (subs.find((d) => xk(d) === xk(want)) || want) };
     };
     const items = []; const seen = new Map(); let loose = 0;
     for (const f of files) {
-      const name = fix(path.basename(f)); let folder = place(name);
+      const r = read(path.basename(f)); const name = r.name; let folder = sub === folders.SUBDIRS[0] ? r.folder : '';
       if (folder === null) { folder = ''; loose++; }
       const key = folder.toLowerCase();
       if (!seen.has(key)) seen.set(key, new Set(((await folders.images(path.join(dir, folder))) || []).map((n) => n.toLowerCase())));
@@ -368,7 +373,7 @@ class TileChat {
     }
     items.sort((a, b) => a.folder.localeCompare(b.folder));
     const plan = { id: uid(), mode: 'files', status: 'pending', warnings: [], dir, sub, collection: target, items };
-    if (loose) plan.warnings.push(`В имени ${loose === 1 ? 'файла' : 'части файлов'} не нашёл формат и цвет (жду вид «Kassel_grey_1200x600_fr1») — положу прямо в Faces, без подпапки.`);
+    if (loose) plan.warnings.push(`В имени ${loose === 1 ? 'файла' : 'части файлов'} не нашёл формат и цвет (жду вид «Kassel_light grey_1200x600_fr1») — положу прямо в Faces, без подпапки.`);
     if (viaBase) plan.warnings.push(`У ${coll.name} своей папки нет — это ${viaBase} под другим названием. Кладу в папку ${viaBase}.`);
     const brandsIn = Object.keys(coll.tm || {});
     if (brandsIn.length > 1) plan.warnings.push(`У коллекции несколько брендов (${brandsIn.join(', ')}). Кладу в папку: ${found.parent}. Если нужна другая — скажите.`);
