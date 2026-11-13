@@ -7,6 +7,7 @@ const folders = require('./folders');
 const path = require('path');
 const { understand, parseLocal, TM } = require('./parse');
 const filesLib = require('./files');
+const names = require('./names');
 
 const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'status', 'year', 'month', 'comment'];
 // Разделы карточки артикула
@@ -72,6 +73,12 @@ class TileChat {
       try { u = await understand(text, model, ai); } catch (e) {
         this.journal.add('error', 'ИИ не ответил, сообщение разобрано скриптом', { text, error: String(e.message || e) });
         u = await understand(text, model, null); note = 'ИИ сейчас не ответил, разобрал сообщение скриптом. ';
+      }
+      // коллекция названа кириллицей или с опечаткой, а такая уже есть — берём существующую
+      for (const p of u.products || []) {
+        if (!p.collection || model.collections.has(sheet.norm(p.collection))) continue;
+        const hit = names.resolve(p.collection, [...model.collections.values()].map((c) => c.name));
+        if (hit) { note += `«${p.collection}» понял как коллекцию ${hit}. `; p.collection = hit; }
       }
       // заводской код «FJ2580» → артикул характеристик «FJ258» (последний знак — сорт)
       for (const p of u.products || []) {
@@ -318,6 +325,7 @@ class TileChat {
     const sq = (x) => sheet.norm(x).replace(/[^\p{L}\d]/gu, '');
     let coll = null;
     for (const c of model.collections.values()) if (sq(c.name).length >= 3 && sq(low).includes(sq(c.name)) && (!coll || c.name.length > coll.name.length)) coll = c;
+    if (!coll) { const hit = names.find(text, [...model.collections.values()].map((c) => c.name)); if (hit) coll = model.collections.get(sheet.norm(hit)); }
     // второе название, которого нет в характеристиках (например, выведенное) — берём основную коллекцию
     if (!coll) for (const t of this.twins()) if (sq(low).includes(sq(t.name))) coll = model.collections.get(sheet.norm(t.base)) || { name: t.base, tm: {} };
     if (!sub || !coll) {
@@ -334,15 +342,39 @@ class TileChat {
     if (!found && this.baseOf(coll.name)) { viaBase = this.baseOf(coll.name); found = folders.find(ix, viaBase); }
     if (!found) return [this.msg(`У коллекции ${coll.name} ещё нет папки на сети. Сначала напишите «создай папки для ${coll.name}», потом приложите картинки ещё раз.`, { kind: 'warn' })];
     const dir = path.join(found.dir, sub);
-    const have = new Set(((await folders.images(dir)) || []).map((n) => n.toLowerCase()));
-    const items = files.map((f) => ({ src: f, name: path.basename(f), exists: have.has(path.basename(f).toLowerCase()) }));
-    const plan = { id: uid(), mode: 'files', status: 'pending', warnings: [], dir, sub, collection: coll.name, items };
+    // имя файла: вместо второго названия (Denver) — основное название коллекции (Kassel)
+    const target = viaBase || coll.name;
+    const alias = [...new Set([coll.name, ...this.twins().filter((t) => sheet.norm(t.base) === sheet.norm(target)).map((t) => t.name)])].filter((n) => sheet.norm(n) !== sheet.norm(target));
+    const fix = (name) => { for (const a of alias) { const re = new RegExp('^' + a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s_-]+') + '(?=[\\s_.-])', 'i'); if (re.test(name)) return name.replace(re, target.replace(/\s+/g, '_')); } return name; };
+    // фейсы лежат в подпапках «формат_цвет» (1200х600_grey): берём формат и цвет из имени файла
+    const subs = sub === folders.SUBDIRS[0] ? ((await folders.subdirs(dir)) || []) : [];
+    const xk = (v) => v.toLowerCase().replace(/[xх×]/g, 'x');
+    const place = (name) => {
+      if (sub !== folders.SUBDIRS[0]) return '';
+      const parts = name.replace(/\.[^.]+$/, '').split(/[_\s]+/).filter(Boolean);
+      const fi = parts.findIndex((t) => /^\d{2,4}[xхX×Х]\d{2,4}$/.test(t)); if (fi < 0) return null;
+      const nameLen = target.split(/\s+/).length;
+      const color = parts.filter((t, k) => k >= nameLen && k !== fi && !/^fr\d*$/i.test(t) && !/^\d+$/.test(t)).join('_'); if (!color) return null;
+      const want = parts[fi].replace(/[xX×Х]/g, 'х') + '_' + color;
+      return subs.find((d) => xk(d) === xk(want)) || want;
+    };
+    const items = []; const seen = new Map(); let loose = 0;
+    for (const f of files) {
+      const name = fix(path.basename(f)); let folder = place(name);
+      if (folder === null) { folder = ''; loose++; }
+      const key = folder.toLowerCase();
+      if (!seen.has(key)) seen.set(key, new Set(((await folders.images(path.join(dir, folder))) || []).map((n) => n.toLowerCase())));
+      items.push({ src: f, name, was: name !== path.basename(f) ? path.basename(f) : '', folder, isNew: !!folder && !subs.some((d) => d === folder), exists: seen.get(key).has(name.toLowerCase()) });
+    }
+    items.sort((a, b) => a.folder.localeCompare(b.folder));
+    const plan = { id: uid(), mode: 'files', status: 'pending', warnings: [], dir, sub, collection: target, items };
+    if (loose) plan.warnings.push(`В имени ${loose === 1 ? 'файла' : 'части файлов'} не нашёл формат и цвет (жду вид «Kassel_grey_1200x600_fr1») — положу прямо в Faces, без подпапки.`);
     if (viaBase) plan.warnings.push(`У ${coll.name} своей папки нет — это ${viaBase} под другим названием. Кладу в папку ${viaBase}.`);
     const brandsIn = Object.keys(coll.tm || {});
     if (brandsIn.length > 1) plan.warnings.push(`У коллекции несколько брендов (${brandsIn.join(', ')}). Кладу в папку: ${found.parent}. Если нужна другая — скажите.`);
-    if (items.every((i) => i.exists)) { plan.status = 'done'; return [this.msg(`Все эти файлы уже лежат в папке ${dir} — копировать нечего.`)]; }
+    if (items.every((i) => i.exists)) { plan.status = 'done'; return [this.msg(`Все эти файлы уже лежат в папке ${[...new Set(items.map((i) => path.join(dir, i.folder)))].join(', ')} — копировать нечего.`)]; }
     this.plans.set(plan.id, plan);
-    return [this.msg(`Понял. Вот что сделаю с картинками для ${coll.name}:`, { plan })];
+    return [this.msg(`Понял. Вот что сделаю с картинками для ${target}:`, { plan })];
   }
 
   /** Новый артикул из файла выпуска → обычный план добавления (данные берём из заводского названия) */
@@ -546,8 +578,9 @@ class TileChat {
       let done = 0; let skipped = 0;
       for (const it of plan.items) {
         if (it.done) continue;
-        const dest = path.join(plan.dir, it.name);
+        const dest = path.join(plan.dir, it.folder || '', it.name);
         try {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
           if (fs.existsSync(dest)) { skipped++; it.done = true; continue; }
           fs.copyFileSync(it.src, dest, fs.constants.COPYFILE_EXCL);
           if (fs.statSync(dest).size !== fs.statSync(it.src).size) throw new Error('размер копии не совпал с исходным');
@@ -557,7 +590,8 @@ class TileChat {
           this.journal.add('failed', 'Копирование картинки в папку коллекции', { file: it.name, dir: plan.dir, error: String(e.message || e) });
         }
       }
-      if (done) results.unshift({ ok: true, text: `Скопировано файлов — ${done}: ${plan.dir}`, open: plan.dir });
+      const where = [...new Set(plan.items.map((i) => path.join(plan.dir, i.folder || '')))];
+      if (done) { results.unshift({ ok: true, text: `Скопировано файлов — ${done}: ${where.join(', ')}`, open: where[0] }); folders.reset(); }
       if (skipped) results.push({ ok: null, text: `Пропущено — ${skipped}: файлы с такими именами там уже лежат, не заменял.` });
       const bad = results.some((r) => r.ok === false);
       plan.status = bad ? 'failed' : 'done';

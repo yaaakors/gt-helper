@@ -129,4 +129,4 @@ function ensureCollection(root, brand, collection) {
   }
   return { base, created, existed };
 }
-module.exports = { index, reset, find, images, productPhotos, renders, brands, matchBrand, findCollection, missingSubs, defaultParent, collectionPaths, ensureCollection, SUBDIRS };
+module.exports = { subdirs: adirs, index, reset, find, images, productPhotos, renders, brands, matchBrand, findCollection, missingSubs, defaultParent, collectionPaths, ensureCollection, SUBDIRS };

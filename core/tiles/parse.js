@@ -1,6 +1,7 @@
 // Разбор сообщения про плитку: скриптом (всегда) и через ИИ (если подключён).
 // Результат один и тот же: { intent, products:[{поле: значение}], task }
 'use strict';
+const names = require('./names');
 
 // русское/украинское начало слова -> значение из файла характеристик
 const COLOR = [
@@ -110,6 +111,8 @@ function parseLocal(text, model) {
       if (new RegExp('(?<![\\p{L}\\d])' + c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\d])', 'iu').test(t)) best = c.name;
     }
     if (best) f.collection = best;
+    // название кириллицей («калаката экстра») или в чужой раскладке
+    else { const byEar = names.find(t, [...model.collections.values()].map((c) => c.name)); if (byEar) f.collection = byEar; }
   }
   // вопрос: «что есть по ON099?», «покажи коллекцию Fjord Rock»
   const ask = /^\s*(что|шо|покажи|показать|найди|инф|данные|расскажи|есть ли|какой|какая|какие|сколько|ск[іи]льки|где|де|як[іи]й)(?![\p{L}])|\?\s*$/iu.test(text);

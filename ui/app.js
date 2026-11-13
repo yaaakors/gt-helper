@@ -42,8 +42,12 @@ function planCard(plan) {
   const draw = () => {
     card.textContent = '';
     if (plan.mode === 'files') {
-      const part = el('div', { class: 'part' }, el('h3', { text: `Картинки — скопировать в «${plan.sub}»` }), el('div', { class: 'path', text: plan.dir }));
-      for (const it of plan.items.slice(0, 30)) part.append(el('div', { class: 'note', text: it.name + (it.exists ? ' — уже есть там, пропущу' : '') }));
+      const part = el('div', { class: 'part' }, el('h3', { text: `Картинки — скопировать в «${plan.sub}»` }));
+      let last = null;
+      for (const it of plan.items.slice(0, 30)) {
+        if (it.folder !== last) { last = it.folder; part.append(el('div', { class: 'path', text: plan.dir + (it.folder ? '\\' + it.folder : '') }), it.isNew && el('div', { class: 'note', text: 'папки ещё нет — создам' })); }
+        part.append(el('div', { class: 'note', text: it.name + (it.was ? `  (было: ${it.was})` : '') + (it.exists ? ' — уже есть там, пропущу' : '') }));
+      }
       if (plan.items.length > 30) part.append(el('div', { class: 'more', text: `…и ещё файлов: ${plan.items.length - 30}` }));
       part.append(el('div', { class: 'note', text: 'Исходные файлы не трогаю. Существующие в папке не заменяю.' }));
       card.append(part);
