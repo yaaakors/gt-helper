@@ -290,6 +290,8 @@ class TileChat {
     const sq = (x) => sheet.norm(x).replace(/[^\p{L}\d]/gu, '');
     let coll = null;
     for (const c of model.collections.values()) if (sq(c.name).length >= 3 && sq(low).includes(sq(c.name)) && (!coll || c.name.length > coll.name.length)) coll = c;
+    // второе название, которого нет в характеристиках (например, выведенное) — берём основную коллекцию
+    if (!coll) for (const t of this.twins()) if (sq(low).includes(sq(t.name))) coll = model.collections.get(sheet.norm(t.base)) || { name: t.base, tm: {} };
     if (!sub || !coll) {
       this.held = { files, time: Date.now() };
       const what = !sub && !coll ? 'что это за картинки и для какой коллекции' : !sub ? 'что это за картинки: фейсы, рендеры или живые фото' : 'для какой коллекции (в подписи не нашёл названия из характеристик)';
@@ -300,12 +302,14 @@ class TileChat {
     if (!root) return [this.msg('В Настройках не указана папка каталога на сети — положить картинки некуда.', { kind: 'warn' })];
     const ix = await folders.index(root);
     if (!ix) return [this.msg(`Сетевая папка сейчас недоступна (${root}). Попробуйте позже — картинки приложите ещё раз.`, { kind: 'bad' })];
-    const found = folders.find(ix, coll.name);
+    let found = folders.find(ix, coll.name); let viaBase = '';
+    if (!found && this.baseOf(coll.name)) { viaBase = this.baseOf(coll.name); found = folders.find(ix, viaBase); }
     if (!found) return [this.msg(`У коллекции ${coll.name} ещё нет папки на сети. Сначала напишите «создай папки для ${coll.name}», потом приложите картинки ещё раз.`, { kind: 'warn' })];
     const dir = path.join(found.dir, sub);
     const have = new Set(((await folders.images(dir)) || []).map((n) => n.toLowerCase()));
     const items = files.map((f) => ({ src: f, name: path.basename(f), exists: have.has(path.basename(f).toLowerCase()) }));
     const plan = { id: uid(), mode: 'files', status: 'pending', warnings: [], dir, sub, collection: coll.name, items };
+    if (viaBase) plan.warnings.push(`У ${coll.name} своей папки нет — это ${viaBase} под другим названием. Кладу в папку ${viaBase}.`);
     const brandsIn = Object.keys(coll.tm || {});
     if (brandsIn.length > 1) plan.warnings.push(`У коллекции несколько брендов (${brandsIn.join(', ')}). Кладу в папку: ${found.parent}. Если нужна другая — скажите.`);
     if (items.every((i) => i.exists)) { plan.status = 'done'; return [this.msg(`Все эти файлы уже лежат в папке ${dir} — копировать нечего.`)]; }
@@ -325,11 +329,25 @@ class TileChat {
     return await this.advance();
   }
 
-  /** Где лежит папка коллекции (если каталог доступен) */
+  /** Вторые названия коллекций для других рынков: Denver = Kassel (Польша). Список — twins.json в папке данных */
+  twins() { return this.store.read('twins.json', TWINS); }
+  /** Основная коллекция для второго названия (или null) */
+  baseOf(collection) { const k = sheet.norm(collection); const t = this.twins().find((x) => sheet.norm(x.name) === k); return t ? t.base : null; }
+  /** Строка для карточки: «Другое название: …» */
+  twinLine(collection) {
+    const k = sheet.norm(collection); const all = this.twins();
+    const up = all.find((x) => sheet.norm(x.name) === k);
+    if (up) return `Это коллекция ${up.base} под названием для рынка: ${up.market}.` + (up.old ? ' Название выведено.' : '');
+    const down = all.filter((x) => sheet.norm(x.base) === k);
+    return down.length ? 'Другие названия: ' + down.map((x) => `${x.name} (${x.market}${x.old ? ', выведено' : ''})`).join(', ') + '.' : '';
+  }
+
+  /** Где лежит папка коллекции (если каталог доступен). У второго названия своей папки может не быть — тогда папка основной */
   async whereFolder(collection) {
     const ix = await folders.index(this.store.get('catalogRoot'));
     if (!ix) return null;
-    const e = folders.find(ix, safeName(collection));
+    let e = folders.find(ix, safeName(collection));
+    if (!e && this.baseOf(collection)) e = folders.find(ix, safeName(this.baseOf(collection)));
     return e ? e.dir : '';
   }
 
@@ -349,14 +367,14 @@ class TileChat {
         const dir = rec.collection ? await this.whereFolder(rec.collection) : null;
         const photo = dir ? (await folders.productPhotos(dir, rec.article))[0] : '';
         out.push(this.msg(`Вот что есть по ${rec.article}:`, { card: { title: [rec.article, rec.collection, rec.color, rec.format].filter(Boolean).join(' · '), sections, rows: [], photo: photo ? path.join(dir, photo) : '',
-          note: empty.length ? 'Не заполнено: ' + empty.join(', ') : '', folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
+          note: [rec.collection && this.twinLine(rec.collection), empty.length ? 'Не заполнено: ' + empty.join(', ') : ''].filter(Boolean).join(' '), folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
       } else if (p.collection) {
         const key = sheet.norm(p.collection);
         const list = model.rows.filter((r) => sheet.norm(r.collection) === key);
         const dir = await this.whereFolder(p.collection);
         if (!list.length) { out.push(this.msg(`Коллекции ${p.collection} в характеристиках нет.` + (dir ? ` Но папка в каталоге есть: ${dir}` : ''), dir ? { card: { title: p.collection, rows: [], note: '', folder: dir, open: dir } } : {})); continue; }
         const rows = list.slice(0, 60).map((r) => ({ label: r.article, value: [r.color, r.format, r.surface, r.decor, r.status && !/^актив/i.test(r.status) ? r.status : ''].filter(Boolean).join(' · ') }));
-        out.push(this.msg(`Коллекция ${list[0].collection}: артикулов — ${list.length}.`, { card: { title: `${list[0].collection} · ${[...new Set(list.map((r) => r.tm))].join(', ')}`, rows, note: list.length > 60 ? `Показаны первые 60 из ${list.length}.` : '', folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
+        out.push(this.msg(`Коллекция ${list[0].collection}: артикулов — ${list.length}.`, { card: { title: `${list[0].collection} · ${[...new Set(list.map((r) => r.tm))].join(', ')}`, rows, note: [this.twinLine(list[0].collection), list.length > 60 ? `Показаны первые 60 из ${list.length}.` : ''].filter(Boolean).join(' '), folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
       }
     }
     return out.length ? out : this.unknown(text, 'Не понял, про какой артикул или коллекцию вопрос.');
@@ -568,6 +586,12 @@ class TileChat {
     return [this.msg(head + tail, { results, kind: failed ? 'bad' : 'ok', planUpdate: { id: planId, status: plan.status } })];
   }
 }
+
+const TWINS = [
+  { name: 'Denver', base: 'Kassel', market: 'Польша' },
+  { name: 'Lyon', base: 'Kronewald', market: 'Польша' },
+  { name: 'Domingo', base: 'Kassel', market: 'Польша', old: true },
+];
 
 const HELP = [
   'Что я умею сейчас:',
