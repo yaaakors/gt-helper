@@ -38,8 +38,10 @@ function remember(list) {
 }
 /** Миниатюра картинки. В Windows берём готовую у системы (быстро даже для больших файлов с сети). */
 async function thumb(file, height) {
-  try { const t = await nativeImage.createThumbnailFromPath(file, { width: Math.round(height * 1.6), height }); if (!t.isEmpty()) return 'data:image/jpeg;base64,' + t.toJPEG(80).toString('base64'); } catch { /* нет системной миниатюры — сделаем сами */ }
-  try { const img = nativeImage.createFromPath(file); if (!img.isEmpty()) return 'data:image/jpeg;base64,' + img.resize({ height: Math.min(height, img.getSize().height) }).toJPEG(78).toString('base64'); } catch { /* не картинка */ }
+  // пустая или битая миниатюра хуже, чем никакой: проверяем, что картинка действительно получилась
+  const pack = (img) => { if (!img || img.isEmpty()) return ''; const b = img.toJPEG(80); return b && b.length > 200 ? 'data:image/jpeg;base64,' + b.toString('base64') : ''; };
+  try { const t = pack(await nativeImage.createThumbnailFromPath(file, { width: Math.round(height * 1.6), height })); if (t) return t; } catch { /* нет системной миниатюры — сделаем сами */ }
+  try { const img = nativeImage.createFromPath(file); if (!img.isEmpty()) { const t = pack(img.resize({ height: Math.min(height, img.getSize().height) })); if (t) return t; } } catch { /* не картинка */ }
   return '';
 }
 /** Ответы чата с картинками: дорисовываем миниатюры (сам чат про окно и картинки ничего не знает) */
@@ -52,9 +54,9 @@ async function decorate(list) {
 }
 const userMsg = (text, files) => ({ id: 'u' + Date.now().toString(36), from: 'user', time: new Date().toISOString(), text, files: files && files.length ? files : undefined });
 /** Описание приложенного файла для переписки (у картинок — маленькая миниатюра) */
-function attachment(file, height = 96) {
-  const a = { name: path.basename(file), path: file, kind: /\.(jpe?g|png|webp|bmp)$/i.test(file) ? 'image' : /\.(xlsx?|xlsm|csv)$/i.test(file) ? 'excel' : 'file' };
-  if (a.kind === 'image') { try { const img = nativeImage.createFromPath(file); if (!img.isEmpty()) a.thumb = 'data:image/jpeg;base64,' + img.resize({ height: Math.min(height, img.getSize().height) }).toJPEG(78).toString('base64'); } catch { /* без миниатюры */ } }
+async function attachment(file, height = 96) {
+  const a = { name: path.basename(file), path: file, kind: /\.(jpe?g|png|webp|bmp|tiff?)$/i.test(file) ? 'image' : /\.(xlsx?|xlsm|csv)$/i.test(file) ? 'excel' : 'file' };
+  if (a.kind === 'image') { const t = await thumb(file, height); if (t) a.thumb = t; }
   return a;
 }
 
@@ -131,11 +133,11 @@ function handlers() {
   h('chat:history', () => history().map((m) => { if (m.plan && ['pending', 'failed'].includes(m.plan.status) && !chat.plans.has(m.plan.id)) m.plan.status = 'expired'; return m; }));
   h('chat:send', async (text, files) => {
     const paths = (Array.isArray(files) ? files : []).map(String).filter((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } }).slice(0, 30);
-    const u = userMsg(text, paths.map(attachment)); remember([u]);
+    const u = userMsg(text, await Promise.all(paths.map((f) => attachment(f)))); remember([u]);
     return [u].concat(remember(await decorate(await chat.handle(text, paths))));
   });
-  h('files:info', (paths) => (Array.isArray(paths) ? paths : []).map(String).filter((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } }).slice(0, 30)
-    .map((f) => Object.assign(attachment(f, 360), { size: fs.statSync(f).size }))); // для окна отправки: превью покрупнее
+  h('files:info', async (paths) => Promise.all((Array.isArray(paths) ? paths : []).map(String).filter((f) => { try { return fs.statSync(f).isFile(); } catch { return false; } }).slice(0, 30)
+    .map(async (f) => Object.assign(await attachment(f, 360), { size: fs.statSync(f).size })))); // для окна отправки: превью покрупнее
   h('files:pick', async () => { const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'] }); return r.canceled ? [] : r.filePaths; });
   h('files:paste', (name, data) => { // картинка, вставленная из буфера: сохраняем во «входящие» папки данных
     const dir = store.file('inbox'); fs.mkdirSync(dir, { recursive: true });

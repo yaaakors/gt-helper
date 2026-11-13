@@ -123,7 +123,7 @@ function messageNode(m) {
     const node = el('div', { class: 'm user' });
     if (m.files && m.files.length) {
       const box = el('div', { class: 'files' });
-      for (const f of m.files) box.append(f.thumb ? el('img', { src: f.thumb, alt: f.name, title: f.name }) : fileChip(f.name));
+      for (const f of m.files) { if (!f.thumb) { box.append(fileChip(f.name)); continue; } const im = el('img', { src: f.thumb, alt: '', title: f.name }); im.addEventListener('error', () => im.replaceWith(fileChip(f.name))); box.append(im); }
       node.append(box);
     }
     if (m.text) node.append(el('div', { text: m.text }));
