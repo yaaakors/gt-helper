@@ -14,14 +14,14 @@ const FIELDS = [
   ['surface', (h) => h === 'поверхня'], ['relief', (h) => h === 'рельєф'], ['frost', (h) => h === 'морозостійкість'],
   ['design', (h) => h === 'тип дизайну'], ['pei', (h) => h.includes('(pei)')], ['ptv', (h) => h.includes('(ptv)')],
   ['r', (h) => h.includes('(r)')], ['ean', (h) => h.startsWith('штрихкод')], ['status', (h) => h === 'актуальність'],
-  ['year', (h) => h.startsWith('рік випуску')], ['comment', (h) => h === 'коментар'],
+  ['year', (h) => h.startsWith('рік випуску')], ['month', (h) => h.startsWith('місяць випуску')], ['comment', (h) => h === 'коментар'],
   // упаковка
   ['pcs', (h) => h.startsWith('шт в упаков')], ['m2pack', (h) => h.startsWith('м² в упаков') || h.startsWith('м2 в упаков')], ['w1', (h) => h.startsWith('вага 1 м')],
   ['wpack', (h) => h.startsWith('вага упаковки')], ['packsPal', (h) => h.startsWith('упаковок на палет')], ['m2pal', (h) => h.startsWith('м² на палет') || h.startsWith('м2 на палет')],
   ['wpal', (h) => h.startsWith('вага палет')],
   ['packNote', (h) => h.startsWith('упаковка: прим')],
 ];
-const NUMERIC = new Set(['thickness', 'pei', 'year', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal']);
+const NUMERIC = new Set(['thickness', 'pei', 'year', 'month', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal']);
 // Поля, где значение должно быть из уже существующих в файле
 const CLOSED = ['tm', 'purpose', 'type', 'rect', 'color', 'surface', 'relief', 'frost', 'r', 'status'];
 

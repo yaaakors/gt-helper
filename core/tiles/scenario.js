@@ -8,10 +8,10 @@ const path = require('path');
 const { understand, parseLocal, TM } = require('./parse');
 const filesLib = require('./files');
 
-const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'status', 'year', 'comment'];
+const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'status', 'year', 'month', 'comment'];
 // Разделы карточки артикула
 const GROUPS = [
-  ['Основное', ['tm', 'collection', 'decor', 'status', 'year']],
+  ['Основное', ['tm', 'collection', 'decor', 'status', 'year', 'month']],
   ['Назначение', ['purpose', 'usage', 'type']],
   ['Размер', ['format', 'thickness', 'rect']],
   ['Внешний вид', ['color', 'colorGroup', 'surface', 'relief', 'design']],
@@ -60,6 +60,13 @@ class TileChat {
       if (/^(спасибо|благодарю|дякую|спс|ок|окей|хорошо|понял|ясно|добре|зрозум[іи]ло)[\s!.,)]*$/iu.test(text)) return [this.msg('Пожалуйста. Если что-то нужно — пишите.')];
       if (!source.configured(this.store)) return [this.msg('Сначала укажите в Настройках, где лежат характеристики: Excel-файл или Google Таблица.', { kind: 'warn' })];
       const model = await source.load(this.store);
+      // «какие артикулы ещё не выпускались» — активные без даты выпуска
+      if (/не\s+выпуска|не\s+выпущ|без\s+(даты\s+)?выпуска|ещ[её]\s+не\s+выш/iu.test(text) && !/добав|созда/iu.test(text)) {
+        const list = model.rows.filter((r) => !String(r.year || '').trim() && !/^виведен/iu.test(r.status || ''));
+        if (!list.length) return [this.msg('Таких нет: у всех действующих артикулов есть дата выпуска.')];
+        const rows = list.slice(0, 80).map((r) => ({ label: r.article, value: [r.collection, r.color, r.format, r.tm].filter(Boolean).join(' · ') }));
+        return [this.msg(`По документам есть, а в файлах выпуска ещё не встречались — артикулов: ${list.length}.`, { card: { title: 'Ещё не выпускались', rows, note: list.length > 80 ? `Показаны первые 80 из ${list.length}.` : 'Дата выпуска появится, когда артикул встретится в файле выпуска.', folder: '', open: '' } })];
+      }
       let u; let note = '';
       const ai = this.ai && this.ai.ready() ? (s, t) => this.ai.json(s, t) : null;
       try { u = await understand(text, model, ai); } catch (e) {
@@ -220,7 +227,9 @@ class TileChat {
       if (!p.rect && p.format && p.type && model.rectRule[p.format + '|' + p.type]) { p.rect = model.rectRule[p.format + '|' + p.type]; p._auto.rect = 'по формату'; }
       if (!p.frost && p.type && model.frostRule[p.type]) { p.frost = model.frostRule[p.type]; p._auto.frost = 'по типу'; }
       if (!p.status) { p.status = (model.vocab.status || []).find((s) => /^актив/i.test(s)) || ''; if (p.status) p._auto.status = 'по умолчанию'; }
-      if (!p.year) { p.year = String(new Date().getFullYear()); p._auto.year = 'текущий год'; }
+      // дата выпуска — только по факту, из файла выпуска; при ручном добавлении остаётся пустой
+      if (d.release && !p.year) { p.year = String(d.release.year); p._auto.year = 'из файла выпуска'; if (model.cols.month) { p.month = String(d.release.month); p._auto.month = 'из файла выпуска'; } }
+      if (!model.cols.month) delete p.month;
     }
     // план
     const warnings = [];
@@ -228,6 +237,7 @@ class TileChat {
       if (p.format && !(model.vocab.format || []).includes(p.format)) warnings.push(`Формат ${p.format} — новый, такого в характеристиках ещё нет.`);
       if (p.format && p.type && !p.rect) warnings.push(`Ректифікат для ${p.format} не знаю — таких ещё не было. Останется пустым.`);
     }
+    if (d.products.some((p) => !p.year)) warnings.push('Дата выпуска пока пустая — поставлю её, когда артикул появится в файле выпуска.');
     const plan = {
       id: uid(), mode: 'add', status: 'pending', warnings: [...new Set(warnings)],
       products: d.products.map((p) => this.view(model, p)),
@@ -252,17 +262,35 @@ class TileChat {
       let grid;
       try { grid = filesLib.readGrid(f).grid; } catch (e) { out.push(this.msg(`Не смог прочитать «${name}»: ${e.message || e}`, { kind: 'bad' })); this.journal.add('failed', 'Чтение файла из чата', { name, error: String(e.message || e) }); continue; }
       const type = filesLib.detect(grid);
-      if (type === 'release') releases.push({ name, grid }); else if (type === 'pack') packs.push({ name, grid }); else other.push(name);
+      if (type === 'release') releases.push({ name, grid, date: filesLib.releaseDate(f) }); else if (type === 'pack') packs.push({ name, grid }); else other.push(name);
     }
     if (releases.length) {
-      let checked = 0; const fresh = new Map();
-      for (const r of releases) { const res = filesLib.releaseCheck(r.grid, model); checked += res.checked; for (const x of res.fresh) if (!fresh.has(x.article.toLowerCase())) fresh.set(x.article.toLowerCase(), x); }
+      let checked = 0; const fresh = new Map(); const first = new Map();
+      const earlier = (a, b) => a.year * 12 + a.month < b.year * 12 + b.month;
+      for (const r of releases) {
+        const res = filesLib.releaseCheck(r.grid, model); checked += res.checked;
+        for (const x of res.fresh) if (!fresh.has(x.article.toLowerCase())) fresh.set(x.article.toLowerCase(), Object.assign(x, { release: r.date }));
+        for (const x of res.first) { const k = x.article.toLowerCase(); if (!first.has(k) || earlier(r.date, first.get(k).release)) first.set(k, Object.assign(x, { release: r.date })); }
+      }
       const head = `Проверил выпуск: файлов — ${releases.length}, строк первого сорта — ${checked}. `;
+      this._first = first;
       if (!fresh.size) out.push(this.msg(head.trim(), { results: [{ ok: true, text: 'Новых артикулов нет — все уже есть в характеристиках.' }] }));
       else {
         this.fresh = fresh; const list = [...fresh.values()];
         out.push(this.msg(head + `Новых артикулов — ${list.length}:\n\n` + list.map((x) => `${x.collection} - ${x.article} - ${x.name}`).join('\n') + '\n\nМогу завести их в характеристики — нажмите кнопку, покажу план.', { options: list.slice(0, 12).map((x) => 'Добавить ' + x.article) }));
       }
+    }
+    if (releases.length && this._first && this._first.size) {
+      // артикул был в характеристиках без даты выпуска и впервые встретился в файле выпуска → проставить год и месяц
+      const list = [...this._first.values()]; this._first = null;
+      const mm = (r) => String(r.month).padStart(2, '0') + '.' + r.year;
+      const fields = (r) => (model.cols.month ? { year: String(r.year), month: String(r.month) } : { year: String(r.year) });
+      const view = list.map((x) => ({ article: x.article, collection: x.collection, rows: Object.entries(fields(x.release)).map(([k, v]) => ({ key: k, label: this.label(model, k), from: '', value: v })) }));
+      const plan = { id: uid(), mode: 'update', status: 'pending', warnings: [], changes: list.map((x) => ({ article: x.article, fields: fields(x.release) })), view, target: source.title(this.store) };
+      if (!model.cols.month) plan.warnings.push('В характеристиках нет колонки «Місяць випуску» — запишу только год. Добавьте такую колонку рядом с «Рік випуску SKU», и я буду писать месяц.');
+      if (releases.some((r) => r.date.from === 'file')) plan.warnings.push('В имени файла выпуска нет даты (жду вид «Выпуск 12_11») — взял дату самого файла. Проверьте месяц.');
+      this.plans.set(plan.id, plan);
+      out.push(this.msg(`Впервые в выпуске — артикулов: ${list.length} (${list.map((x) => x.article).join(', ')}). До сих пор они были без даты выпуска. Проставлю ${[...new Set(list.map((x) => mm(x.release)))].join(', ')}:`, { plan }));
     }
     for (const pk of packs) {
       let d;
@@ -325,7 +353,7 @@ class TileChat {
     const known = model.collections.get(sheet.norm(x.collection));
     const title = (t) => t.toLowerCase().replace(/(^|[\s-])(\p{L})/gu, (m, a, b) => a + b.toUpperCase());
     const p = Object.assign(f, { article: x.article, collection: known ? known.name : (f.collection && sheet.norm(f.collection).startsWith(sheet.norm(x.collection)) ? f.collection : title(x.collection)) });
-    this.draft = { mode: 'add', products: [p], source: x.name, note: `Данные взял из названия в файле выпуска: «${x.name}». Проверьте их в плане. ` };
+    this.draft = { mode: 'add', products: [p], source: x.name, release: x.release, note: `Данные взял из названия в файле выпуска: «${x.name}». Проверьте их в плане. ` };
     return await this.advance();
   }
 
@@ -367,7 +395,7 @@ class TileChat {
         const dir = rec.collection ? await this.whereFolder(rec.collection) : null;
         const photo = dir ? (await folders.productPhotos(dir, rec.article))[0] : '';
         out.push(this.msg(`Вот что есть по ${rec.article}:`, { card: { title: [rec.article, rec.collection, rec.color, rec.format].filter(Boolean).join(' · '), sections, rows: [], photo: photo ? path.join(dir, photo) : '',
-          note: [rec.collection && this.twinLine(rec.collection), empty.length ? 'Не заполнено: ' + empty.join(', ') : ''].filter(Boolean).join(' '), folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
+          note: [!String(rec.year || '').trim() && !/^виведен/iu.test(rec.status || '') && 'Ещё не выпускалась: в файлах выпуска артикул не встречался.', rec.collection && this.twinLine(rec.collection), empty.length ? 'Не заполнено: ' + empty.join(', ') : ''].filter(Boolean).join(' '), folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
       } else if (p.collection) {
         const key = sheet.norm(p.collection);
         const list = model.rows.filter((r) => sheet.norm(r.collection) === key);

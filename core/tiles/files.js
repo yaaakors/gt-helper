@@ -38,16 +38,30 @@ const firstGrade = (code) => /[01]$/.test(String(code).trim()); // в работ
 
 /** Выпуск: какие артикулы первого сорта ещё не заведены в характеристиках */
 function releaseCheck(grid, model) {
-  let collection = ''; let checked = 0; const fresh = new Map();
+  let collection = ''; let checked = 0; const fresh = new Map(); const first = new Map();
   for (const r of grid.slice(1)) {
     if (String(r[0] || '').trim()) collection = String(r[0]).trim();
     const code = String(r[1] || '').trim();
     if (!code || !firstGrade(code)) continue;
     checked++;
     const art = baseArticle(code, model);
+    const rec = model.byArticle.get(art.toLowerCase());
+    if (rec && !String(rec.year || '').trim()) first.set(art.toLowerCase(), { article: rec.article, collection: rec.collection });
     if (!model.byArticle.has(art.toLowerCase()) && !fresh.has(art.toLowerCase())) fresh.set(art.toLowerCase(), { article: art, code, collection, name: String(r[2] || '').trim() });
   }
-  return { checked, fresh: [...fresh.values()] };
+  return { checked, fresh: [...fresh.values()], first: [...first.values()] };
+}
+
+/** Дата выпуска по имени файла «Выпуск 12_11.xls» (день_месяц[_год]); нет даты в имени — дата самого файла */
+function releaseDate(file) {
+  const now = new Date(); const m = /(\d{1,2})[_.\-](\d{1,2})(?:[_.\-](\d{4}|\d{2}))?(?=\D*$)/.exec(path.basename(file, path.extname(file)));
+  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12 && Number(m[1]) >= 1 && Number(m[1]) <= 31) {
+    const month = Number(m[2]); let year = m[3] ? Number(m[3].length === 2 ? '20' + m[3] : m[3]) : now.getFullYear();
+    if (!m[3] && month > now.getMonth() + 1) year--; // «28_12» в январе — это прошлый год
+    return { year, month, from: 'name' };
+  }
+  let d = now; try { d = require('fs').statSync(file).mtime; } catch { /* файла уже нет */ }
+  return { year: d.getFullYear(), month: d.getMonth() + 1, from: 'file' };
 }
 
 const PACK_COLS = { code: 'код кол', ean: 'штрих', w1: 'вага 1м2', m2pal: 'м2 на палеті', m2pack: 'ємність пачки', packsPal: 'пачок на палеті', wpal: 'вага пакет-піддону при відвантаженні авто' };
@@ -85,4 +99,4 @@ function packDiff(grid, model) {
   return { matched, unknown, changes };
 }
 
-module.exports = { kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };
+module.exports = { releaseDate,  kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };

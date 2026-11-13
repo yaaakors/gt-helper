@@ -15,12 +15,12 @@ const COLUMNS = [
   ['Зовнішній вигляд', [['colorGroup', 'Група кольору'], ['color', 'Колір'], ['surface', 'Поверхня'], ['relief', 'Рельєф'], ['frost', 'Морозостійкість'], ['design', 'Тип дизайну']]],
   ['Технічні характеристики', [['pei', 'Зносостійкість (PEI)'], ['ptv', 'Коефіцієнт тертя ковзання (PTV)'], ['r', 'Коефіцієнт тертя ковзання (R)']]],
   ['Упаковка і штрихкод', [['ean', 'Штрихкод EAN'], ['pcs', 'Шт в упаковці'], ['m2pack', 'м² в упаковці'], ['w1', 'Вага 1 м², кг'], ['wpack', 'Вага упаковки, кг'], ['packsPal', 'Упаковок на палеті'], ['m2pal', 'м² на палеті'], ['wpal', 'Вага палети, кг'], ['packNote', 'Упаковка: примітка']]],
-  ['Статус', [['status', 'Актуальність'], ['year', 'Рік випуску SKU']]],
+  ['Статус', [['status', 'Актуальність'], ['year', 'Рік випуску SKU'], ['month', 'Місяць випуску']]],
   ['Службові', [['comment', 'Коментар']]],
 ];
 const FLAT = COLUMNS.flatMap(([, cols]) => cols);
 // поле модели → колонка таблицы articles (простые поля)
-const DIRECT = { decor: 'decor', purpose: 'purpose', type: 'type', format: 'format', thickness: 'thickness', rect: 'rect', frost: 'frost', color: 'color', surface: 'surface', relief: 'relief', pei: 'pei', ptv: 'ptv', r: 'r', year: 'year', comment: 'comment', ean: 'ean', pcs: 'pcs', m2pack: 'm2pack', w1: 'w1', wpack: 'wpack', packsPal: 'packs_pal', m2pal: 'm2pal', wpal: 'wpal', packNote: 'pack_note' };
+const DIRECT = { decor: 'decor', purpose: 'purpose', type: 'type', format: 'format', thickness: 'thickness', rect: 'rect', frost: 'frost', color: 'color', surface: 'surface', relief: 'relief', pei: 'pei', ptv: 'ptv', r: 'r', year: 'year', month: 'month', comment: 'comment', ean: 'ean', pcs: 'pcs', m2pack: 'm2pack', w1: 'w1', wpack: 'wpack', packsPal: 'packs_pal', m2pal: 'm2pal', wpal: 'wpal', packNote: 'pack_note' };
 const MULTI = ['usage', 'design'];
 const now = () => new Date().toISOString();
 const clean = (v) => (v === null || v === undefined ? '' : String(v).trim());
@@ -54,6 +54,8 @@ class Db {
     this.db = new DatabaseSync(file);
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;');
     this.db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
+    // базы, созданные до 0.4.5: добавляем месяц выпуска
+    if (!this.db.prepare('PRAGMA table_info(articles)').all().some((c) => c.name === 'month')) this.db.exec('ALTER TABLE articles ADD COLUMN month INTEGER');
     if (!this.meta('version')) this.setMeta('version', '1');
     this.cache = null;
   }
@@ -225,7 +227,7 @@ class Db {
     const ExcelJS = require('exceljs');
     const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet('Асортимент Актуал');
     const g = this.grid();
-    g.forEach((row, i) => { const r = ws.addRow(row.map((v, j) => (i > 1 && ['thickness', 'pei', 'year', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal'].includes(FLAT[j][0]) && v !== '' && Number.isFinite(Number(v)) ? Number(v) : v))); if (i < 2) r.font = { bold: true }; });
+    g.forEach((row, i) => { const r = ws.addRow(row.map((v, j) => (i > 1 && ['thickness', 'pei', 'year', 'month', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal'].includes(FLAT[j][0]) && v !== '' && Number.isFinite(Number(v)) ? Number(v) : v))); if (i < 2) r.font = { bold: true }; });
     ws.views = [{ state: 'frozen', ySplit: 2 }];
     ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: g.length, column: FLAT.length } };
     ws.columns.forEach((c, i) => { c.width = [10, 22, 18, 16][i] || 14; });

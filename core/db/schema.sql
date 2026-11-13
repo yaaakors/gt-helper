@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS articles (
   status TEXT NOT NULL DEFAULT 'active',     -- active | withdrawn
   withdrawn_year INTEGER,
   network_id INTEGER REFERENCES networks(id), -- эксклюзив этого артикула
-  year INTEGER, comment TEXT,
+  year INTEGER, month INTEGER, comment TEXT,   -- год и месяц фактического выпуска (из файла выпуска); пусто — ещё не выпускался
   factory_code TEXT,                         -- заводской код первого сорта (6 знаков)
   ean TEXT, pcs REAL, m2pack REAL, w1 REAL, wpack REAL, packs_pal REAL, m2pal REAL, wpal REAL, pack_note TEXT,
   created TEXT NOT NULL, updated TEXT NOT NULL
