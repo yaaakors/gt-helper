@@ -41,6 +41,10 @@ class TileChat {
       const pick = /^Добавить ([\p{L}\d]+)$/u.exec(text);
       if (pick && this.fresh && this.fresh.has(pick[1].toLowerCase())) return await this.addFromRelease(this.fresh.get(pick[1].toLowerCase()));
       if (/^(помощь|помоги|что ты умеешь\??|help|\?)$/iu.test(text)) return [this.msg(HELP)];
+      if (!this.awaiting && /^(отмена|отмени|стоп|не надо)$/iu.test(text)) {
+        let n = 0; for (const pl of this.plans.values()) if (pl.status === 'pending') { pl.status = 'cancelled'; n++; }
+        this.draft = null; return [this.msg(n ? 'Отменил, ничего не менялось.' : 'Отменять нечего — ничего не было начато.')];
+      }
       if (this.awaiting) {
         const used = this.applyAnswer(text);
         if (used) return await this.advance();
@@ -115,7 +119,7 @@ class TileChat {
     if (value === null && a.free && text.split(/\s+/).length <= 5 && !/добав|обнов|задач/iu.test(low)) value = text;
     if (value === null) return false;
     if (a.skip && value === a.skip) value = '';
-    for (const p of this.draft.products) if (a.all || p === a.product) { p[a.key] = value; if (value === '') (p._skipped = p._skipped || {})[a.key] = true; }
+    for (const p of this.draft.products) if (a.all ? (p === a.product || !p[a.key]) : p === a.product) { p[a.key] = value; if (value === '') (p._skipped = p._skipped || {})[a.key] = true; }
     this.awaiting = null;
     return true;
   }
@@ -168,7 +172,12 @@ class TileChat {
       if (!p.collection) return this.ask(`Как называется коллекция${many ? ' для ' + p.article : ''}?`, 'collection', p, { free: true, all: !many || d.products.every((x) => !x.collection) });
       const known = model.collections.get(sheet.norm(p.collection));
       if (known) p.collection = known.name;
-      if (!p.tm && known) { const tm = Object.entries(known.tm).sort((a, b) => b[1] - a[1])[0]; if (tm) { p.tm = tm[0]; (p._auto = p._auto || {}).tm = 'как у коллекции'; } }
+      // бренд не угадываем: один бренд у коллекции — берём его, несколько — спрашиваем
+      if (!p.tm && known) {
+        const tms = Object.entries(known.tm).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
+        if (tms.length === 1) { p.tm = tms[0]; (p._auto = p._auto || {}).tm = 'как у коллекции'; }
+        else if (tms.length > 1) return this.ask(`В коллекции ${p.collection} есть артикулы нескольких брендов: ${tms.join(', ')}. Какой бренд у ${p.article || 'нового артикула'}?`, 'tm', p, { options: [...tms, ...(model.vocab.tm || []).filter((t) => !tms.includes(t))], all: true });
+      }
       if (!p.tm) return this.ask(`Какой бренд (ТМ) у коллекции ${p.collection}? От него зависит папка на сети.`, 'tm', p, { options: model.vocab.tm || [], all: true });
       for (const pr of this.normalize(model, p)) {
         const first = String(pr.value).toLowerCase().slice(0, 3);
@@ -331,7 +340,14 @@ class TileChat {
     const p = d.products.find((x) => x.collection) || d.products[0];
     if (!p.collection) return this.ask('Как называется коллекция?', 'collection', p, { free: true, all: true });
     const known = model.collections.get(sheet.norm(p.collection));
-    if (known) { p.collection = known.name; if (!p.tm) { const tm = Object.entries(known.tm).sort((a, b) => b[1] - a[1])[0]; if (tm) p.tm = tm[0]; } }
+    if (known) {
+      p.collection = known.name;
+      if (!p.tm) {
+        const tms = Object.entries(known.tm).sort((a, b) => b[1] - a[1]).map((x) => x[0]);
+        if (tms.length === 1) p.tm = tms[0];
+        else if (tms.length > 1) return this.ask(`В коллекции ${p.collection} есть артикулы нескольких брендов: ${tms.join(', ')}. Для какого бренда папки?`, 'tm', p, { options: tms, all: true });
+      }
+    }
     const fp = await this.folderPlan([p]);
     // папка уже есть и в ней всё на месте — создавать нечего, так и говорим
     if (fp.length && fp.every((f) => f.exists && !f.missing.length)) {
