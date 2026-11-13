@@ -49,7 +49,7 @@ function planCard(plan) {
         part.append(el('div', { class: 'note', text: it.name + (it.was ? `  (было: ${it.was})` : '') + (it.exists ? ' — уже есть там, пропущу' : '') }));
       }
       if (plan.items.length > 30) part.append(el('div', { class: 'more', text: `…и ещё файлов: ${plan.items.length - 30}` }));
-      part.append(el('div', { class: 'note', text: 'Исходные файлы не трогаю. Существующие в папке не заменяю.' }));
+      part.append(el('div', { class: 'note', text: 'При сохранении оптимизирую: убираю служебные данные, перевожу в sRGB, сжимаю. Размер в пикселях и плотность не меняю. Исходные файлы не трогаю, существующие в папке не заменяю.' }));
       card.append(part);
     } else if (plan.mode !== 'update') {
       if (plan.products.length) {

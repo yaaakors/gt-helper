@@ -1,7 +1,7 @@
 {
   "name": "gt-helper",
   "productName": "GT Помощник",
-  "version": "0.4.10",
+  "version": "0.5.0",
   "description": "Личный помощник: чат для работы с плиткой и планировщик задач",
   "author": "Vit",
   "license": "UNLICENSED",
@@ -15,6 +15,7 @@
   "dependencies": {
     "electron-updater": "^6.8.11",
     "exceljs": "^4.4.0",
+    "sharp": "^0.34.5",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -25,9 +26,43 @@
     "appId": "ua.vit.gthelper",
     "productName": "GT Помощник",
     "artifactName": "GT-Helper-Setup-${version}.${ext}",
-    "files": ["main.js", "preload.js", "core/**", "ui/**", "google/**", "package.json"],
-    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
-    "nsis": { "oneClick": true, "perMachine": false, "createDesktopShortcut": true, "shortcutName": "GT Помощник", "deleteAppDataOnUninstall": false, "language": "1049" },
-    "publish": [{ "provider": "github", "owner": "yaaakors", "repo": "gt-helper", "releaseType": "release" }]
+    "files": [
+      "main.js",
+      "preload.js",
+      "core/**",
+      "ui/**",
+      "google/**",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "GT Помощник",
+      "deleteAppDataOnUninstall": false,
+      "language": "1049"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "yaaakors",
+        "repo": "gt-helper",
+        "releaseType": "release"
+      }
+    ],
+    "asarUnpack": [
+      "**/node_modules/sharp/**",
+      "**/node_modules/@img/**"
+    ]
   }
 }

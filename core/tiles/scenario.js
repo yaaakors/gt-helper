@@ -593,23 +593,28 @@ class TileChat {
     if (plan.mode === 'files') {
       const fs = require('fs');
       try { fs.mkdirSync(plan.dir, { recursive: true }); } catch (e) { /* ниже будет понятная ошибка по каждому файлу */ }
-      let done = 0; let skipped = 0;
+      const imagesLib = require('./images');
+      let done = 0; let skipped = 0; let before = 0; let after = 0; let optimized = 0; const notes = new Map();
       for (const it of plan.items) {
         if (it.done) continue;
         const dest = path.join(plan.dir, it.folder || '', it.name);
         try {
           fs.mkdirSync(path.dirname(dest), { recursive: true });
           if (fs.existsSync(dest)) { skipped++; it.done = true; continue; }
-          fs.copyFileSync(it.src, dest, fs.constants.COPYFILE_EXCL);
-          if (fs.statSync(dest).size !== fs.statSync(it.src).size) throw new Error('размер копии не совпал с исходным');
-          it.done = true; done++;
+          const r = await imagesLib.save(it.src, dest);
+          if (!fs.existsSync(dest) || !fs.statSync(dest).size) throw new Error('файл в папке не появился');
+          it.done = true; done++; before += r.before; after += r.after; if (r.mode === 'optimized') optimized++;
+          if (r.note) notes.set(r.note, (notes.get(r.note) || []).concat(it.name));
         } catch (e) {
           results.push({ ok: false, text: `${it.name}: ${e.message || e}` });
           this.journal.add('failed', 'Копирование картинки в папку коллекции', { file: it.name, dir: plan.dir, error: String(e.message || e) });
         }
       }
       const where = [...new Set(plan.items.map((i) => path.join(plan.dir, i.folder || '')))];
-      if (done) { results.unshift({ ok: true, text: `Скопировано файлов — ${done}: ${where.join(', ')}`, open: where[0] }); folders.reset(); }
+      if (done) { results.unshift({ ok: true, text: `Сохранено файлов — ${done}: ${where.join(', ')}`, open: where[0] }); folders.reset(); }
+      if (optimized) results.push({ ok: true, text: `Оптимизировано — ${optimized}: было ${imagesLib.sizeText(before)}, стало ${imagesLib.sizeText(after)}. Размер в пикселях и плотность не менялись.` });
+      for (const [note, list] of notes) results.push({ ok: null, text: `${list.length > 3 ? list.slice(0, 3).join(', ') + ` и ещё ${list.length - 3}` : list.join(', ')}: ${note}.` });
+      if ([...notes.keys()].some((n) => /недоступна|не смог|не прошла/.test(n))) this.journal.add('failed', 'Оптимизация картинок', { notes: [...notes.entries()] });
       if (skipped) results.push({ ok: null, text: `Пропущено — ${skipped}: файлы с такими именами там уже лежат, не заменял.` });
       const bad = results.some((r) => r.ok === false);
       plan.status = bad ? 'failed' : 'done';
