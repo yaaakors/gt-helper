@@ -457,7 +457,7 @@ class TileChat {
           subtitle: [ru.value('type', rec.type), ru.value('format', rec.format), ru.value('color', rec.color), ru.value('surface', rec.surface)].filter(Boolean).join(' · '),
           badge: rec.status && !/^актив/i.test(rec.status) ? ru.value('status', rec.status) : '',
           sections, rows: [], photo: photo ? path.join(dir, photo) : '',
-          nophoto: dir === null ? 'папка каталога недоступна' : !dir ? 'нет папки коллекции' : photo ? '' : `в папке коллекции нет файла «… - ${rec.article}.jpg»`,
+          nophoto: dir === null ? 'папка каталога недоступна' : !dir ? 'нет папки коллекции' : photo ? '' : `в папке коллекции нет файла «… - ${rec.article}.jpg» или «… - ${rec.article}0.jpg»`,
           note: notes.join(' '), folder: dir || '', open: dir || '' } }));
       } else if (p.collection) {
         const key = sheet.norm(p.collection);
@@ -505,7 +505,7 @@ class TileChat {
       } else {
         files = (await folders.productPhotos(dir, rec ? rec.article : '')).map((n) => path.join(dir, n));
         title = rec ? `Фото плитки · ${rec.article} · ${name}` : `Фото плиток · ${name}`;
-        none = rec ? `Фото артикула ${rec.article} в папке коллекции не нашёл. Оно должно лежать в ${dir} и называться «… - ${rec.article}.jpg».` : `В папке коллекции ${name} фото плиток нет.`;
+        none = rec ? `Фото артикула ${rec.article} в папке коллекции не нашёл. Оно должно лежать в ${dir} и называться «… - ${rec.article}.jpg» или с кодом сорта «… - ${rec.article}0.jpg».` : `В папке коллекции ${name} фото плиток нет.`;
       }
       if (!files.length) { out.push(this.msg(none, { card: { title: name, rows: [], note: '', folder: dir, open: dir } })); continue; }
       out.push(this.msg(files.length === 1 ? 'Вот:' : `Нашёл картинок: ${files.length}.` + (files.length > 8 ? ' Показываю первые 8, остальные — в папке.' : ''),

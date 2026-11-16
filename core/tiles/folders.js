@@ -101,7 +101,11 @@ async function productPhotos(dir, article) {
   const all = await images(dir);
   if (!article) return all;
   const key = String(article).toLowerCase();
-  return all.filter((n) => { const stem = n.replace(IMG, '').toLowerCase().trim(); return stem.endsWith(key) && !/[\p{L}\d]/u.test(stem.slice(-key.length - 1, -key.length)); });
+  // имя кончается артикулом («… - 97742») или заводским кодом — артикул + сорт («… - 977420», первый сорт: 0 или 1)
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('(^|[^\\p{L}\\d])' + esc + '[01]?$', 'iu');
+  return all.filter((n) => re.test(n.replace(IMG, '').toLowerCase().trim()))
+    .sort((a, b) => /[01]$/.test(a.replace(IMG, '')) - /[01]$/.test(b.replace(IMG, ''))); // сначала точное совпадение
 }
 /** Визуализации коллекции: папка «Рендери» (и вложенные на один уровень) */
 async function renders(dir) {
