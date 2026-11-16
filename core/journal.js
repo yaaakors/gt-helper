@@ -24,6 +24,19 @@ class Journal {
     try { fs.appendFileSync(this.file, JSON.stringify(rec) + '\n', 'utf8'); } catch { /* журнал не должен ронять программу */ }
     return rec;
   }
+  /** Убрать из журнала записи, которые разработчик уже обработал (список приходит с обновлением программы) */
+  prune() {
+    let done = [];
+    try { done = require('./journal-done.json').done || []; } catch { return 0; }
+    if (!done.length) return 0;
+    let text = '';
+    try { text = fs.readFileSync(this.file, 'utf8'); } catch { return 0; }
+    const ids = new Set(done); const lines = text.split('\n').filter(Boolean);
+    const keep = lines.filter((l) => { try { return !ids.has(JSON.parse(l).id); } catch { return true; } });
+    if (keep.length === lines.length) return 0;
+    try { fs.writeFileSync(this.file, keep.map((l) => l + '\n').join(''), 'utf8'); } catch { return 0; }
+    return lines.length - keep.length;
+  }
   list() {
     let text = '';
     try { text = fs.readFileSync(this.file, 'utf8'); } catch { return []; }

@@ -257,6 +257,7 @@ app.whenReady().then(() => {
     const old = store.get('dataDir'); store.set({ dataDir: '' }); copyData(old, store.dataDir);
   }
   journal = new Journal(store, app.getVersion());
+  journal.prune(); // обработанные записи убираем — в журнале остаётся только то, что ещё не сделано
   tasks = new Tasks(store);
   chat = new TileChat({ store, journal, tasks, ai });
   process.on('uncaughtException', (e) => journal.add('error', String(e.message || e), { stack: String(e.stack || '').split('\n').slice(0, 5) }));

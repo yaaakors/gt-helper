@@ -138,18 +138,33 @@ function messageNode(m) {
   }
   if (m.plan) node.append(planCard(m.plan));
   if (m.card) {
-    const c = m.card; const box = el('div', { class: 'card plan info' });
-    box.append(el('div', { class: 'info-head' }, el('h3', { text: c.title }), c.photoThumb && el('button', { class: 'pic', title: 'Открыть фото', onclick: () => api.open(c.photo) }, el('img', { src: c.photoThumb, alt: 'Фото плитки' }))));
-    const body = el('div', { class: 'info-body' }); const cols = el('div', { class: 'info-cols' });
-    for (const sec of c.sections || []) {
-      const kv = el('dl', { class: 'kv' }); for (const r of sec.rows) kv.append(el('dt', { text: r.label }), el('dd', { text: r.value }));
-      cols.append(el('div', { class: 'sec' }, el('div', { class: 'sec-t', text: sec.title }), kv));
+    const c = m.card; const box = el('div', { class: 'card plan info' + (c.kind ? ' ' + c.kind : '') });
+    // шапка: превью плитки, артикул крупно, коллекция и бренд, коротко главное
+    const pic = c.photoThumb ? el('button', { class: 'pic', title: 'Открыть фото', onclick: () => api.open(c.photo) }, el('img', { src: c.photoThumb, alt: 'Фото плитки' }))
+      : c.kind === 'article' ? el('div', { class: 'pic none', title: c.nophoto || '' }, el('span', { text: 'нет фото' })) : null;
+    const head = el('div', { class: 'info-head' }, pic, el('div', { class: 'info-title' },
+      c.article ? el('div', { class: 'big' }, el('span', { text: c.article }), c.badge && el('span', { class: 'badge', text: c.badge })) : null,
+      el('div', { class: c.article ? 'sub1' : 'big', text: c.title }), c.subtitle && el('div', { class: 'sub2', text: c.subtitle })));
+    box.append(head);
+    if (c.sections && c.sections.length) {
+      const grid = el('div', { class: 'info-grid' });
+      for (const sec of c.sections) {
+        const kv = el('dl', { class: 'kv' }); for (const r of sec.rows) kv.append(el('dt', { text: r.label }), el('dd', { class: r.dim ? 'dim' : '', text: r.value }));
+        grid.append(el('section', { class: 'sec' }, el('div', { class: 'sec-t', text: sec.title }), kv));
+      }
+      box.append(grid);
     }
-    if (c.rows && c.rows.length) { const kv = el('dl', { class: 'kv' }); for (const r of c.rows) kv.append(el('dt', { text: r.label }), el('dd', { text: r.value })); cols.append(kv); }
-    if (cols.childNodes.length) body.append(cols);
-    if (body.childNodes.length) box.append(body);
-    if (c.note) box.append(el('div', { class: 'note', text: c.note }));
-    if (c.folder) box.append(el('div', { class: 'note' }, el('span', { class: 'path', text: c.folder }), c.open && el('button', { class: 'link', text: 'Открыть папку', onclick: () => api.open(c.open) })));
+    if (c.table) {
+      const t = el('table', { class: 'tbl' }); t.append(el('thead', {}, el('tr', {}, ...c.table.cols.map((h) => el('th', { text: h })))));
+      const tb = el('tbody'); for (const r of c.table.rows) tb.append(el('tr', {}, ...r.map((v, k) => el('td', { class: k === 0 ? 'code' : '', text: v || '—' })))); t.append(tb);
+      box.append(el('div', { class: 'tbl-wrap' }, t));
+    }
+    if (c.rows && c.rows.length) { const kv = el('dl', { class: 'kv' }); for (const r of c.rows) kv.append(el('dt', { text: r.label }), el('dd', { text: r.value })); box.append(kv); }
+    const notes = el('div', { class: 'notes' });
+    if (c.note) notes.append(el('div', { class: 'note', text: c.note }));
+    if (c.nophoto && !c.photoThumb) notes.append(el('div', { class: 'note', text: 'Фото плитки не нашёл: ' + c.nophoto + '.' }));
+    if (notes.childNodes.length) box.append(notes);
+    if (c.folder) box.append(el('div', { class: 'note foot-path' }, el('span', { class: 'path', title: c.folder, text: c.folder.length > 72 ? c.folder.slice(0, 24) + '…' + c.folder.slice(-45) : c.folder }), c.open && el('button', { class: 'link', text: 'Открыть папку', onclick: () => api.open(c.open) })));
     node.append(box);
   }
   if (m.gallery) {

@@ -8,18 +8,19 @@ const path = require('path');
 const { understand, parseLocal, TM } = require('./parse');
 const filesLib = require('./files');
 const names = require('./names');
+const ru = require('./ru');
 
 const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'status', 'year', 'month', 'comment'];
 // Разделы карточки артикула
 const GROUPS = [
-  ['Основное', ['tm', 'collection', 'decor', 'status', 'year', 'month']],
-  ['Назначение', ['purpose', 'usage', 'type']],
+  ['Назначение', ['purpose', 'usage']],
   ['Размер', ['format', 'thickness', 'rect']],
-  ['Внешний вид', ['color', 'colorGroup', 'surface', 'relief', 'design']],
-  ['Технические', ['frost', 'pei', 'ptv', 'r']],
-  ['Упаковка', ['ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal']],
-  ['Заметки', ['comment']],
+  ['Внешний вид', ['color', 'colorGroup', 'surface', 'relief', 'design', 'decor']],
+  ['Технические', ['pei', 'r', 'ptv', 'frost']],
+  ['Упаковка', ['ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'packNote']],
+  ['Выпуск', ['status', 'year', 'comment']],
 ];
+const CARD_LABELS = { purpose: 'Пол или стена', usage: 'Помещения' };
 const WANTED = ['purpose', 'usage', 'type', 'format', 'thickness', 'color', 'surface', 'relief', 'design', 'pei', 'r', 'ean']; // что напомнить, если пусто
 const safeName = (s) => String(s).replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim();
 let seq = 0;
@@ -31,7 +32,7 @@ class TileChat {
     this.draft = null; this.awaiting = null; this.plans = new Map(); this.lastArticles = [];
   }
   msg(text, extra) { return Object.assign({ id: uid(), from: 'bot', time: new Date().toISOString(), text }, extra || {}); }
-  label(model, key) { return model.labels[key] || key; }
+  label(model, key) { return ru.label(key, model.labels[key]); }
 
   async handle(text, files) {
     text = String(text || '').trim();
@@ -59,14 +60,14 @@ class TileChat {
       }
       if (/^(привет\p{L}*|здравствуй\p{L}*|добр\p{L}+ (день|утро|вечер)|доброго дня|в[іи]таю|хай|hello|hi)[\s!.,)]*$/iu.test(text)) return [this.msg('Здравствуйте! Напишите, что сделать: добавить артикул или коллекцию, создать папки, дополнить данные, показать, что есть по артикулу, или записать задачу. Примеры — по слову «помощь».')];
       if (/^(спасибо|благодарю|дякую|спс|ок|окей|хорошо|понял|ясно|добре|зрозум[іи]ло)[\s!.,)]*$/iu.test(text)) return [this.msg('Пожалуйста. Если что-то нужно — пишите.')];
-      if (!source.configured(this.store)) return [this.msg('Сначала укажите в Настройках, где лежат характеристики: Excel-файл или Google Таблица.', { kind: 'warn' })];
+      if (!source.configured(this.store)) return [this.msg(source.kind(this.store) === 'db' ? 'В Настройках выбран источник «База», а она пока пустая. Переключите «Характеристики» обратно на Google Таблицу.' : 'Сначала укажите в Настройках, где лежат характеристики: Excel-файл или Google Таблица.', { kind: 'warn' })];
       const model = await source.load(this.store);
       // «какие артикулы ещё не выпускались» — активные без даты выпуска
       if (/не\s+выпуска|не\s+выпущ|без\s+(даты\s+)?выпуска|ещ[её]\s+не\s+выш/iu.test(text) && !/добав|созда/iu.test(text)) {
         const list = model.rows.filter((r) => !String(r.year || '').trim() && !/^виведен/iu.test(r.status || ''));
         if (!list.length) return [this.msg('Таких нет: у всех действующих артикулов есть дата выпуска.')];
-        const rows = list.slice(0, 80).map((r) => ({ label: r.article, value: [r.collection, r.color, r.format, r.tm].filter(Boolean).join(' · ') }));
-        return [this.msg(`По документам есть, а в файлах выпуска ещё не встречались — артикулов: ${list.length}.`, { card: { title: 'Ещё не выпускались', rows, note: list.length > 80 ? `Показаны первые 80 из ${list.length}.` : 'Дата выпуска появится, когда артикул встретится в файле выпуска.', folder: '', open: '' } })];
+        const table = { cols: ['Артикул', 'Коллекция', 'Формат', 'Цвет', 'Бренд'], rows: list.slice(0, 80).map((r) => [r.article, r.collection, String(r.format || '').replace(/[xх]/gi, '×'), ru.value('color', r.color), r.tm]) };
+        return [this.msg(`По документам есть, а в файлах выпуска ещё не встречались — артикулов: ${list.length}.`, { card: { title: 'Ещё не выпускались', table, rows: [], note: list.length > 80 ? `Показаны первые 80 из ${list.length}.` : 'Дата выпуска появится, когда артикул встретится в файле выпуска.', folder: '', open: '' } })];
       }
       let u; let note = '';
       const ai = this.ai && this.ai.ready() ? (s, t) => this.ai.json(s, t) : null;
@@ -439,20 +440,39 @@ class TileChat {
         const sections = []; const empty = [];
         for (const [title, keys] of GROUPS) {
           const rows = [];
-          for (const k of keys) { if (!model.cols[k]) continue; if (rec[k]) rows.push({ label: this.label(model, k), value: rec[k] }); else if (WANTED.includes(k)) empty.push(this.label(model, k)); }
+          for (const k of keys) {
+            if (!model.cols[k]) continue;
+            if (k === 'colorGroup' && sheet.norm(rec.colorGroup) === sheet.norm(rec.color)) continue; // группа = цвет — не повторяем
+            if (k === 'year') { if (rec.year) rows.push({ label: 'Выпущена', value: [ru.value('month', rec.month), rec.year].filter(Boolean).join(' ') }); else if (!/^виведен/iu.test(rec.status || '')) rows.push({ label: 'Выпущена', value: 'ещё не выпускалась', dim: true }); continue; }
+            if (rec[k]) rows.push({ label: CARD_LABELS[k] || ru.label(k), value: ru.value(k, rec[k]) }); else if (WANTED.includes(k)) empty.push(ru.label(k).toLowerCase());
+          }
           if (rows.length) sections.push({ title, rows });
         }
         const dir = rec.collection ? await this.whereFolder(rec.collection) : null;
         const photo = dir ? (await folders.productPhotos(dir, rec.article))[0] : '';
-        out.push(this.msg(`Вот что есть по ${rec.article}:`, { card: { title: [rec.article, rec.collection, rec.color, rec.format].filter(Boolean).join(' · '), sections, rows: [], photo: photo ? path.join(dir, photo) : '',
-          note: [!String(rec.year || '').trim() && !/^виведен/iu.test(rec.status || '') && 'Ещё не выпускалась: в файлах выпуска артикул не встречался.', rec.collection && this.twinLine(rec.collection), empty.length ? 'Не заполнено: ' + empty.join(', ') : ''].filter(Boolean).join(' '), folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
+        const notes = [rec.collection && this.twinLine(rec.collection), empty.length ? 'Не заполнено: ' + empty.join(', ') + '.' : ''].filter(Boolean);
+        out.push(this.msg(`Вот что есть по ${rec.article}:`, { card: {
+          kind: 'article', article: rec.article,
+          title: [rec.collection, rec.tm].filter(Boolean).join(' · '),
+          subtitle: [ru.value('type', rec.type), ru.value('format', rec.format), ru.value('color', rec.color), ru.value('surface', rec.surface)].filter(Boolean).join(' · '),
+          badge: rec.status && !/^актив/i.test(rec.status) ? ru.value('status', rec.status) : '',
+          sections, rows: [], photo: photo ? path.join(dir, photo) : '',
+          nophoto: dir === null ? 'папка каталога недоступна' : !dir ? 'нет папки коллекции' : photo ? '' : `в папке коллекции нет файла «… - ${rec.article}.jpg»`,
+          note: notes.join(' '), folder: dir || '', open: dir || '' } }));
       } else if (p.collection) {
         const key = sheet.norm(p.collection);
         const list = model.rows.filter((r) => sheet.norm(r.collection) === key);
         const dir = await this.whereFolder(p.collection);
         if (!list.length) { out.push(this.msg(`Коллекции ${p.collection} в характеристиках нет.` + (dir ? ` Но папка в каталоге есть: ${dir}` : ''), dir ? { card: { title: p.collection, rows: [], note: '', folder: dir, open: dir } } : {})); continue; }
-        const rows = list.slice(0, 60).map((r) => ({ label: r.article, value: [r.color, r.format, r.surface, r.decor, r.status && !/^актив/i.test(r.status) ? r.status : ''].filter(Boolean).join(' · ') }));
-        out.push(this.msg(`Коллекция ${list[0].collection}: артикулов — ${list.length}.`, { card: { title: `${list[0].collection} · ${[...new Set(list.map((r) => r.tm))].join(', ')}`, rows, note: [this.twinLine(list[0].collection), list.length > 60 ? `Показаны первые 60 из ${list.length}.` : ''].filter(Boolean).join(' '), folder: dir === null ? '' : (dir || 'Папки коллекции в каталоге нет.'), open: dir || '' } }));
+        const fk = (f) => String(f || '').replace(/[xх×]/gi, '×');
+        const sorted = list.slice().sort((a, b) => fk(a.format).localeCompare(fk(b.format), 'ru', { numeric: true }) || String(a.color).localeCompare(String(b.color)));
+        const table = { cols: ['Артикул', 'Формат', 'Цвет', 'Поверхность', 'Статус'], rows: sorted.slice(0, 80).map((r) => [r.article, fk(r.format), ru.value('color', r.color), ru.value('surface', r.surface) + (r.decor ? ' · ' + r.decor : ''), ru.value('status', r.status)]) };
+        const brands = [...new Set(list.map((r) => String(r.tm || '').replace(/\s*\(.*\)\s*$/, '')).filter(Boolean))];
+        const formats = [...new Set(sorted.map((r) => fk(r.format)).filter(Boolean))];
+        const active = list.filter((r) => !/^виведен/iu.test(r.status || '')).length;
+        out.push(this.msg(`Коллекция ${list[0].collection}: артикулов — ${list.length}.`, { card: { kind: 'collection', article: list[0].collection, title: brands.join(', '),
+          subtitle: [ru.value('type', list[0].type), formats.length <= 4 ? formats.join(', ') : `форматов — ${formats.length}`, active < list.length ? `в ассортименте ${active} из ${list.length}` : ''].filter(Boolean).join(' · '),
+          table, rows: [], note: [this.twinLine(list[0].collection), list.length > 80 ? `Показаны первые 80 из ${list.length}.` : ''].filter(Boolean).join(' '), folder: dir || '', open: dir || '' } }));
       }
     }
     return out.length ? out : this.unknown(text, 'Не понял, про какой артикул или коллекцию вопрос.');
