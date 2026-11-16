@@ -35,6 +35,14 @@ function detect(grid) {
 /** Артикул характеристик из заводского кода: «L71580» → «L7158» (последний знак — сорт) */
 function baseArticle(code, model) { const c = String(code).trim(); return c.length === model.articleLen + 1 ? c.slice(0, model.articleLen) : c; }
 const firstGrade = (code) => /[01]$/.test(String(code).trim()); // в работу — только коды на 0 или 1
+/** Последняя цифра кода — сорт. Первый сорт: у керамогранита 0, у керамической плитки 1.
+ *  Если тип артикула известен — проверяем точно; не известен (новый артикул) — подходят 0 и 1. */
+function gradeOk(code, rec) {
+  const g = String(code).trim().slice(-1); const t = String(rec && rec.type || '');
+  if (/граніт|гранит/i.test(t)) return g === '0';
+  if (/кераміч|керамич/i.test(t)) return g === '1';
+  return g === '0' || g === '1';
+}
 
 /** Выпуск: какие артикулы первого сорта ещё не заведены в характеристиках */
 function releaseCheck(grid, model) {
@@ -46,6 +54,7 @@ function releaseCheck(grid, model) {
     checked++;
     const art = baseArticle(code, model);
     const rec = model.byArticle.get(art.toLowerCase());
+    if (rec && !gradeOk(code, rec)) { checked--; continue; } // не первый сорт для этого типа плитки
     if (rec && !String(rec.year || '').trim()) first.set(art.toLowerCase(), { article: rec.article, collection: rec.collection });
     if (!model.byArticle.has(art.toLowerCase()) && !fresh.has(art.toLowerCase())) fresh.set(art.toLowerCase(), { article: art, code, collection, name: String(r[2] || '').trim() });
   }
@@ -75,7 +84,8 @@ function packDiff(grid, model) {
     if (!code || !firstGrade(code)) continue;
     const rec = model.byArticle.get(baseArticle(code, model).toLowerCase());
     if (!rec) { unknown++; continue; }
-    if (seen.has(rec.article)) continue; // у артикула бывают коды и на 0, и на 1 — берём первый
+    if (!gradeOk(code, rec)) continue; // первый сорт: керамогранит — 0, керамическая плитка — 1
+    if (seen.has(rec.article)) continue;
     seen.add(rec.article); matched++;
     const m2 = num(r[col.m2pack]); const w1 = num(r[col.w1]); const want = {};
     const ean = String(r[col.ean] || '').trim(); if (/^\d{8,14}$/.test(ean)) want.ean = ean;
@@ -99,4 +109,4 @@ function packDiff(grid, model) {
   return { matched, unknown, changes };
 }
 
-module.exports = { releaseDate,  kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };
+module.exports = { releaseDate, gradeOk, kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };

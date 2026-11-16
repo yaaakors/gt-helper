@@ -22,6 +22,8 @@ const GROUPS = [
 ];
 const CARD_LABELS = { purpose: 'Пол или стена', usage: 'Помещения' };
 const WANTED = ['purpose', 'usage', 'type', 'format', 'thickness', 'color', 'surface', 'relief', 'design', 'pei', 'r', 'ean']; // что напомнить, если пусто
+/** Цифра первого сорта в заводском коде: керамогранит — 0, керамическая плитка — 1 */
+const firstGrade = (rec) => (/граніт|гранит/i.test(rec && rec.type || '') ? '0' : /кераміч|керамич/i.test(rec && rec.type || '') ? '1' : '');
 const safeName = (s) => String(s).replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim();
 let seq = 0;
 const uid = () => Date.now().toString(36) + (seq++).toString(36);
@@ -449,7 +451,7 @@ class TileChat {
           if (rows.length) sections.push({ title, rows });
         }
         const dir = rec.collection ? await this.whereFolder(rec.collection) : null;
-        const photo = dir ? (await folders.productPhotos(dir, rec.article))[0] : '';
+        const photo = dir ? (await folders.productPhotos(dir, rec.article, firstGrade(rec)))[0] : '';
         const notes = [rec.collection && this.twinLine(rec.collection), empty.length ? 'Не заполнено: ' + empty.join(', ') + '.' : ''].filter(Boolean);
         out.push(this.msg(`Вот что есть по ${rec.article}:`, { card: {
           kind: 'article', article: rec.article,
@@ -457,7 +459,7 @@ class TileChat {
           subtitle: [ru.value('type', rec.type), ru.value('format', rec.format), ru.value('color', rec.color), ru.value('surface', rec.surface)].filter(Boolean).join(' · '),
           badge: rec.status && !/^актив/i.test(rec.status) ? ru.value('status', rec.status) : '',
           sections, rows: [], photo: photo ? path.join(dir, photo) : '',
-          nophoto: dir === null ? 'папка каталога недоступна' : !dir ? 'нет папки коллекции' : photo ? '' : `в папке коллекции нет файла «… - ${rec.article}.jpg» или «… - ${rec.article}0.jpg»`,
+          nophoto: dir === null ? 'папка каталога недоступна' : !dir ? 'нет папки коллекции' : photo ? '' : `в папке коллекции нет файла «… - ${rec.article}.jpg» или «… - ${rec.article}${firstGrade(rec) || '0'}.jpg»`,
           note: notes.join(' '), folder: dir || '', open: dir || '' } }));
       } else if (p.collection) {
         const key = sheet.norm(p.collection);
@@ -503,9 +505,9 @@ class TileChat {
           if (mine.length) files = mine;
         }
       } else {
-        files = (await folders.productPhotos(dir, rec ? rec.article : '')).map((n) => path.join(dir, n));
+        files = (await folders.productPhotos(dir, rec ? rec.article : '', firstGrade(rec))).map((n) => path.join(dir, n));
         title = rec ? `Фото плитки · ${rec.article} · ${name}` : `Фото плиток · ${name}`;
-        none = rec ? `Фото артикула ${rec.article} в папке коллекции не нашёл. Оно должно лежать в ${dir} и называться «… - ${rec.article}.jpg» или с кодом сорта «… - ${rec.article}0.jpg».` : `В папке коллекции ${name} фото плиток нет.`;
+        none = rec ? `Фото артикула ${rec.article} в папке коллекции не нашёл. Оно должно лежать в ${dir} и называться «… - ${rec.article}.jpg» или с кодом сорта «… - ${rec.article}${firstGrade(rec) || '0'}.jpg».` : `В папке коллекции ${name} фото плиток нет.`;
       }
       if (!files.length) { out.push(this.msg(none, { card: { title: name, rows: [], note: '', folder: dir, open: dir } })); continue; }
       out.push(this.msg(files.length === 1 ? 'Вот:' : `Нашёл картинок: ${files.length}.` + (files.length > 8 ? ' Показываю первые 8, остальные — в папке.' : ''),

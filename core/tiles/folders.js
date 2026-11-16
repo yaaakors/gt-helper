@@ -97,13 +97,14 @@ function find(ix, collection) { const e = ix && ix.map.get(squash(collection)); 
 /** Картинки в папке (только сама папка, без вложенных) */
 async function images(dir) { const l = await list(dir); return (l || []).filter((d) => d.isFile() && IMG.test(d.name)).map((d) => d.name).sort((a, b) => a.localeCompare(b, 'uk', { numeric: true })); }
 /** Фото товара в корне папки коллекции: «Колекція колір формат - АРТИКУЛ.jpg» */
-async function productPhotos(dir, article) {
+/** grade — цифра первого сорта: керамогранит 0, керамическая плитка 1 (не знаем тип — подходят обе) */
+async function productPhotos(dir, article, grade) {
   const all = await images(dir);
   if (!article) return all;
   const key = String(article).toLowerCase();
-  // имя кончается артикулом («… - 97742») или заводским кодом — артикул + сорт («… - 977420», первый сорт: 0 или 1)
+  // имя кончается артикулом («… - 97742») или заводским кодом — артикул + первый сорт («… - 977420»)
   const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp('(^|[^\\p{L}\\d])' + esc + '[01]?$', 'iu');
+  const re = new RegExp('(^|[^\\p{L}\\d])' + esc + '[' + (/^[01]$/.test(grade || '') ? grade : '01') + ']?$', 'iu');
   return all.filter((n) => re.test(n.replace(IMG, '').toLowerCase().trim()))
     .sort((a, b) => /[01]$/.test(a.replace(IMG, '')) - /[01]$/.test(b.replace(IMG, ''))); // сначала точное совпадение
 }
