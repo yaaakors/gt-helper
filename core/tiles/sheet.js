@@ -72,16 +72,27 @@ function majority(map) { // {ключ: {значение: сколько}} -> {�
  * Собрать модель из сетки значений (общая для Excel и Google Таблицы).
  * grid — строки листа, начиная с первой; colorRows — строки листа «Кольори» (с заголовком).
  */
+/** Строка заголовков: «Артикул» в первой колонке — или хотя бы 5 знакомых заголовков (ТМ, Колекція, Формат…) */
+function findHeaderRow(grid) {
+  for (let r = 1; r <= 6; r++) if (norm(cellText(grid[r - 1] ? grid[r - 1][0] : null)) === 'артикул') return r;
+  for (let r = 1; r <= 6; r++) {
+    const hs = (grid[r - 1] || []).map((v) => norm(cellText(v)));
+    if (FIELDS.filter(([, test]) => hs.some((h) => h && test(h))).length >= 5) return r;
+  }
+  return 0;
+}
+
 function modelFromGrid(grid, colorRows, meta) {
   const text = (r, c) => cellText(grid[r - 1] ? grid[r - 1][c - 1] : null);
-  let headerRow = 0;
-  for (let r = 1; r <= 6 && !headerRow; r++) if (norm(text(r, 1)) === 'артикул') headerRow = r;
+  const headerRow = findHeaderRow(grid);
   if (!headerRow) throw new Error('Не найдена строка заголовков (ячейка «Артикул» в первой колонке)');
   const cols = {}; const labels = {};
   (grid[headerRow - 1] || []).forEach((v, i) => {
     const raw = cellText(v); const h = norm(raw);
     for (const [key, test] of FIELDS) if (!cols[key] && test(h)) { cols[key] = i + 1; labels[key] = raw.split('\n')[0].trim(); }
   });
+  // заголовок «Артикул» случайно затёрли (бывает «ы» вместо него) — артикул всё равно в первой колонке
+  if (!cols.article && !Object.values(cols).includes(1)) { cols.article = 1; labels.article = 'Артикул'; }
   for (const need of ['article', 'tm', 'collection']) if (!cols[need]) throw new Error(`Нет колонки для поля «${need}»`);
   const rows = []; const byArticle = new Map(); const counts = {}; const collections = new Map();
   const rectVotes = {}; const frostVotes = {}; let last = headerRow;
@@ -237,4 +248,4 @@ async function updateRows(file, changes, backupDir) {
   return { backup: copy };
 }
 
-module.exports = { load, addRows, updateRows, backup, modelFromGrid, typed, cellText, FIELDS: FIELDS.map((f) => f[0]), CLOSED, NUMERIC, norm };
+module.exports = { findHeaderRow, load, addRows, updateRows, backup, modelFromGrid, typed, cellText, FIELDS: FIELDS.map((f) => f[0]), CLOSED, NUMERIC, norm };

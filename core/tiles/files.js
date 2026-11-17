@@ -28,7 +28,7 @@ function detect(grid) {
   // выпуск: во второй колонке коды из 6 знаков, в третьей — длинное название
   const codes = grid.slice(1).filter((r) => /^[\p{L}\d]{6}$/u.test(String(r[1] || '').trim()) && String(r[2] || '').length > 15);
   if (codes.length && codes.length >= (grid.length - 1) * 0.6) return 'release';
-  if (grid.slice(0, 6).some((r) => low(r[0]) === 'артикул')) return 'sheet';
+  if (require('./sheet').findHeaderRow(grid)) return 'sheet';
   return 'unknown';
 }
 
@@ -136,7 +136,9 @@ function specsDiff(grid, model) {
   const inFile = new Set(fileModel.rows.map((r) => String(r.article || '').toLowerCase()));
   const missing = model.rows.filter((r) => !inFile.has(String(r.article).toLowerCase())).length;
   const onlyFile = Object.keys(fileModel.cols).filter((k) => !model.cols[k]).map((k) => fileModel.labels[k] || k);
-  return { matched, changes, fresh, missing, onlyFile };
+  const hr = sheet.findHeaderRow(grid); const a1 = sheet.cellText((grid[hr - 1] || [])[0]).trim();
+  const brokenHead = sheet.norm(a1) !== 'артикул' ? a1 : null;
+  return { matched, changes, fresh, missing, onlyFile, brokenHead };
 }
 
 module.exports = { specsDiff, releaseDate, gradeOk, kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };

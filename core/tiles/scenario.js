@@ -322,6 +322,7 @@ class TileChat {
       const tail = [d.missing ? `В файле нет ${d.missing} артикулов, которые есть в таблице, — их не трогаю.` : '', d.onlyFile.length ? `Колонок ${d.onlyFile.map((x) => `«${x}»`).join(', ')} в таблице нет — их пропускаю.` : ''].filter(Boolean).join(' ');
       if (!d.changes.length && !d.fresh.length) { out.push(this.msg(`Сверил «${sp.name}» с таблицей: артикулов — ${d.matched}, отличий нет — обновлять нечего. ${tail}`.trim())); continue; }
       const age = sp.mtime ? ` Файл сохранён ${dmy(sp.mtime)}.` : '';
+      if (d.brokenHead !== null) out.push(this.msg(`В файле «${sp.name}» заголовок первой колонки — «${d.brokenHead}» вместо «Артикул» (похоже, случайно затёрли). Считаю, что там артикулы; в файле поправьте.`, { kind: 'warn' }));
       const warn = 'Пустые ячейки файла значения в таблице не стирают. Если таблицу правили после того, как сохранили этот файл, эти правки откатятся — проверьте колонку «было».';
       if (d.changes.length) {
         const view = d.changes.map((c) => ({ article: c.article, collection: c.collection, rows: Object.entries(c.fields).map(([k, v]) => ({ key: k, label: this.label(model, k), from: model.byArticle.get(c.article.toLowerCase())[k], value: v })) }));
