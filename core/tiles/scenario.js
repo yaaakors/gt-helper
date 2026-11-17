@@ -24,6 +24,8 @@ const CARD_LABELS = { purpose: 'Пол или стена', usage: 'Помеще�
 const WANTED = ['purpose', 'usage', 'type', 'format', 'thickness', 'color', 'surface', 'relief', 'design', 'pei', 'r', 'ean']; // что напомнить, если пусто
 /** Цифра первого сорта в заводском коде: керамогранит — 0, керамическая плитка — 1 */
 const firstGrade = (rec) => (/граніт|гранит/i.test(rec && rec.type || '') ? '0' : /кераміч|керамич/i.test(rec && rec.type || '') ? '1' : '');
+const fileTime = (f) => { try { return require('fs').statSync(f).mtimeMs; } catch { return 0; } };
+const dmy = (t) => { const d = new Date(t); return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`; };
 const safeName = (s) => String(s).replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim();
 let seq = 0;
 const uid = () => Date.now().toString(36) + (seq++).toString(36);
@@ -265,7 +267,7 @@ class TileChat {
   async handleFiles(text, files) {
     if (!source.configured(this.store)) return [this.msg('Сначала укажите в Настройках, где лежат характеристики: Excel-файл или Google Таблица.', { kind: 'warn' })];
     const model = await source.load(this.store);
-    const out = []; const releases = []; const packs = []; const other = []; const images = [];
+    const out = []; const releases = []; const packs = []; const other = []; const images = []; const specs = [];
     for (const f of files) {
       const name = path.basename(f);
       if (filesLib.kindOf(f) === 'image') { images.push(f); continue; }
@@ -273,7 +275,7 @@ class TileChat {
       let grid;
       try { grid = filesLib.readGrid(f).grid; } catch (e) { out.push(this.msg(`Не смог прочитать «${name}»: ${e.message || e}`, { kind: 'bad' })); this.journal.add('failed', 'Чтение файла из чата', { name, error: String(e.message || e) }); continue; }
       const type = filesLib.detect(grid);
-      if (type === 'release') releases.push({ name, grid, date: filesLib.releaseDate(f) }); else if (type === 'pack') packs.push({ name, grid }); else other.push(name);
+      if (type === 'release') releases.push({ name, grid, date: filesLib.releaseDate(f) }); else if (type === 'pack') packs.push({ name, grid }); else if (type === 'sheet') specs.push({ name, grid, mtime: fileTime(f) }); else other.push(name);
     }
     if (releases.length) {
       let checked = 0; const fresh = new Map(); const first = new Map();
@@ -313,10 +315,31 @@ class TileChat {
       this.plans.set(plan.id, plan);
       out.push(this.msg(`Сверил упаковку по файлу «${pk.name}»: артикулов — ${d.matched}, с отличиями — ${d.changes.length}.` + tail + ' Вот что изменю:', { plan }));
     }
+    for (const sp of specs) {
+      // файл характеристик: показать отличия от таблицы и предложить внести
+      let d;
+      try { d = filesLib.specsDiff(sp.grid, model); } catch (e) { out.push(this.msg(`«${sp.name}»: ${e.message || e}`, { kind: 'bad' })); continue; }
+      const tail = [d.missing ? `В файле нет ${d.missing} артикулов, которые есть в таблице, — их не трогаю.` : '', d.onlyFile.length ? `Колонок ${d.onlyFile.map((x) => `«${x}»`).join(', ')} в таблице нет — их пропускаю.` : ''].filter(Boolean).join(' ');
+      if (!d.changes.length && !d.fresh.length) { out.push(this.msg(`Сверил «${sp.name}» с таблицей: артикулов — ${d.matched}, отличий нет — обновлять нечего. ${tail}`.trim())); continue; }
+      const age = sp.mtime ? ` Файл сохранён ${dmy(sp.mtime)}.` : '';
+      const warn = 'Пустые ячейки файла значения в таблице не стирают. Если таблицу правили после того, как сохранили этот файл, эти правки откатятся — проверьте колонку «было».';
+      if (d.changes.length) {
+        const view = d.changes.map((c) => ({ article: c.article, collection: c.collection, rows: Object.entries(c.fields).map(([k, v]) => ({ key: k, label: this.label(model, k), from: model.byArticle.get(c.article.toLowerCase())[k], value: v })) }));
+        const plan = { id: uid(), mode: 'update', status: 'pending', warnings: [warn], changes: d.changes.map((c) => ({ article: c.article, fields: c.fields })), view, target: source.title(this.store) };
+        this.plans.set(plan.id, plan);
+        const nf = d.changes.reduce((n, c) => n + Object.keys(c.fields).length, 0);
+        out.push(this.msg(`Сверил «${sp.name}» с таблицей: артикулов — ${d.matched}, с отличиями — ${d.changes.length} (значений — ${nf}).${age} ${tail} Вот что изменю:`.replace(/\s+/g, ' '), { plan }));
+      }
+      if (d.fresh.length) {
+        const plan = { id: uid(), mode: 'add', status: 'pending', warnings: [], products: d.fresh.map((p) => this.view(model, p)), raw: d.fresh.map((p) => { const c = {}; for (const k of ORDER) if (p[k]) c[k] = p[k]; return c; }), target: source.title(this.store), folders: [] };
+        this.plans.set(plan.id, plan);
+        out.push(this.msg(`В файле есть новые артикулы, которых нет в таблице, — ${d.fresh.length}: ${d.fresh.slice(0, 15).map((p) => p.article).join(', ')}${d.fresh.length > 15 ? '…' : ''}. Добавлю их:`, { plan }));
+      }
+    }
     if (images.length) out.push(...await this.planImages(model, text, images));
     if (other.length) {
       this.journal.add('not_understood', text || '(файлы без подписи)', { files: other });
-      out.push(this.msg(`${other.length === 1 ? 'Файл' : 'Файлы'} ${other.map((n) => `«${n}»`).join(', ')} принял, но работать с такими пока не умею. Сейчас понимаю файлы выпуска плитки, файл упаковочных данных и картинки (раскладываю по папкам коллекции). Записал в журнал разработчику — добавят в обновлении.`));
+      out.push(this.msg(`${other.length === 1 ? 'Файл' : 'Файлы'} ${other.map((n) => `«${n}»`).join(', ')} принял, но работать с такими пока не умею. Сейчас понимаю файлы выпуска плитки, файл упаковочных данных, файл характеристик и картинки (раскладываю по папкам коллекции). Записал в журнал разработчику — добавят в обновлении.`));
     }
     return out;
   }
@@ -707,6 +730,7 @@ const HELP = [
   '• Дополнить или изменить данные:\n  «для FJ2580 PEI 4, R10» или сразу после добавления просто «PEI 4, R10, для пола»',
   '• Показать: «что есть по 89192», «покажи картинку 89192», «покажи визуализации по Alpina Wood»',
   '• Файлы: перетащите в чат файл выпуска плитки — проверю, нет ли новых артикулов; файл упаковочных данных — сверю и обновлю упаковку. К файлу можно дописать, что сделать.',
+  '• Файл характеристик: перетащите Excel в том же виде, что таблица (например, от технолога), — покажу, чем отличается, и внесу после «Выполнить». Пустые ячейки файла ничего не стирают',
   '• Картинки: перетащите в чат и подпишите «фейсы в Kassel», «рендеры в Kassel» или «живые фото в Kassel» — скопирую в нужную папку коллекции',
   '• Записать задачу:\n  «задача: отправить файл технологу #плитка»',
   'Перед любым изменением я показываю план. Без кнопки «Выполнить» ничего не меняется. Всё, что не понял или не смог, попадает в журнал разработчику.',

@@ -109,4 +109,34 @@ function packDiff(grid, model) {
   return { matched, unknown, changes };
 }
 
-module.exports = { releaseDate, gradeOk, kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };
+/**
+ * Файл характеристик (Excel в том же виде, что таблица) → чем он отличается от источника.
+ * Пустая ячейка в файле не стирает значение в таблице. Артикулы, которых нет в файле, не трогаем.
+ */
+function specsDiff(grid, model) {
+  const sheet = require('./sheet');
+  const fileModel = sheet.modelFromGrid(grid, [], {});
+  const keys = Object.keys(fileModel.cols).filter((k) => k !== 'article' && model.cols[k]);
+  const same = (k, a, b) => {
+    const x = sheet.cellText(a).replace(/\s+/g, ' ').trim(); const y = sheet.cellText(b).replace(/\s+/g, ' ').trim();
+    if (x.toLowerCase() === y.toLowerCase()) return true;
+    const nx = Number(x.replace(',', '.')); const ny = Number(y.replace(',', '.'));
+    return x !== '' && y !== '' && Number.isFinite(nx) && Number.isFinite(ny) && Math.abs(nx - ny) < 1e-6;
+  };
+  const changes = []; const fresh = []; let matched = 0;
+  for (const r of fileModel.rows) {
+    if (!r.article) continue;
+    const rec = model.byArticle.get(String(r.article).toLowerCase());
+    if (!rec) { const c = {}; for (const k of Object.keys(fileModel.cols)) { const v = sheet.cellText(r[k]).trim(); if (v) c[k] = v; } fresh.push(c); continue; }
+    matched++;
+    const fields = {};
+    for (const k of keys) { const v = sheet.cellText(r[k]).trim(); if (v && !same(k, v, rec[k])) fields[k] = v; }
+    if (Object.keys(fields).length) changes.push({ article: rec.article, collection: rec.collection, fields });
+  }
+  const inFile = new Set(fileModel.rows.map((r) => String(r.article || '').toLowerCase()));
+  const missing = model.rows.filter((r) => !inFile.has(String(r.article).toLowerCase())).length;
+  const onlyFile = Object.keys(fileModel.cols).filter((k) => !model.cols[k]).map((k) => fileModel.labels[k] || k);
+  return { matched, changes, fresh, missing, onlyFile };
+}
+
+module.exports = { specsDiff, releaseDate, gradeOk, kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };
