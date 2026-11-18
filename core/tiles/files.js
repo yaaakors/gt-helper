@@ -61,16 +61,40 @@ function releaseCheck(grid, model) {
   return { checked, fresh: [...fresh.values()], first: [...first.values()] };
 }
 
-/** Дата выпуска по имени файла «Выпуск 12_11.xls» (день_месяц[_год]); нет даты в имени — дата самого файла */
+/**
+ * Дата выпуска по имени файла. Числа в имени — дни и месяцы: «Выпуск 12_11», «Выпуск 02_03_11» (2 и 3 ноября),
+ * «Выпуск 30_31_10_01_11» (30–31 октября и 1 ноября). Берём последний день: предпоследнее число — день, последнее — месяц.
+ * Год — только если в имени есть четыре цифры; иначе текущий (а «28_12» в январе — прошлый). Нет даты в имени — дата файла.
+ */
 function releaseDate(file) {
-  const now = new Date(); const m = /(\d{1,2})[_.\-](\d{1,2})(?:[_.\-](\d{4}|\d{2}))?(?=\D*$)/.exec(path.basename(file, path.extname(file)));
-  if (m && Number(m[2]) >= 1 && Number(m[2]) <= 12 && Number(m[1]) >= 1 && Number(m[1]) <= 31) {
-    const month = Number(m[2]); let year = m[3] ? Number(m[3].length === 2 ? '20' + m[3] : m[3]) : now.getFullYear();
-    if (!m[3] && month > now.getMonth() + 1) year--; // «28_12» в январе — это прошлый год
-    return { year, month, from: 'name' };
+  const now = new Date(); const stem = path.basename(file, path.extname(file));
+  const nums = (stem.match(/\d+/g) || []); const yearTok = nums.find((n) => n.length === 4);
+  const dm = nums.filter((n) => n.length <= 2).map(Number);
+  if (dm.length >= 2) {
+    const month = dm[dm.length - 1]; const day = dm[dm.length - 2];
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      let year = yearTok ? Number(yearTok) : now.getFullYear();
+      if (!yearTok && (month > now.getMonth() + 1 || (month === now.getMonth() + 1 && day > now.getDate()))) year--;
+      return { year, month, day, from: 'name' };
+    }
   }
   let d = now; try { d = require('fs').statSync(file).mtime; } catch { /* файла уже нет */ }
-  return { year: d.getFullYear(), month: d.getMonth() + 1, from: 'file' };
+  return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), from: 'file' };
+}
+
+/** Все строки выпуска с количеством: код, артикул, сорт, коллекция, сколько и куда (по заголовкам колонок) */
+function releaseRows(grid, model) {
+  const head = (grid[0] || []).map((h) => String(h || '').trim());
+  let collection = ''; const out = [];
+  for (const r of grid.slice(1)) {
+    if (String(r[0] || '').trim()) collection = String(r[0]).trim();
+    const code = String(r[1] || '').trim(); if (!code) continue;
+    const qty = {}; let total = 0;
+    for (let c = 3; c < r.length; c++) { const v = Number(r[c]); if (Number.isFinite(v) && v > 0 && r[c] !== '') { const k = head[c] || `колонка ${c + 1}`; qty[k] = Math.round(v * 1000) / 1000; total += v; } }
+    const art = baseArticle(code, model); const rec = model.byArticle.get(art.toLowerCase());
+    out.push({ code, article: art, first: rec ? gradeOk(code, rec) : firstGrade(code), collection, qty, total: Math.round(total * 1000) / 1000 });
+  }
+  return out;
 }
 
 const PACK_COLS = { code: 'код кол', ean: 'штрих', w1: 'вага 1м2', m2pal: 'м2 на палеті', m2pack: 'ємність пачки', packsPal: 'пачок на палеті', wpal: 'вага пакет-піддону при відвантаженні авто' };
@@ -141,4 +165,4 @@ function specsDiff(grid, model) {
   return { matched, changes, fresh, missing, onlyFile, brokenHead };
 }
 
-module.exports = { specsDiff, releaseDate, gradeOk, kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };
+module.exports = { specsDiff, releaseDate, releaseRows, gradeOk, kindOf, readGrid, detect, releaseCheck, packDiff, baseArticle, firstGrade };

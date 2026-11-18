@@ -9,6 +9,7 @@ const { understand, parseLocal, TM } = require('./parse');
 const filesLib = require('./files');
 const names = require('./names');
 const ru = require('./ru');
+const { Releases } = require('./releases');
 
 const ORDER = ['article', 'tm', 'collection', 'decor', 'purpose', 'usage', 'type', 'format', 'thickness', 'rect', 'color', 'surface', 'relief', 'frost', 'design', 'pei', 'ptv', 'r', 'ean', 'pcs', 'm2pack', 'w1', 'wpack', 'packsPal', 'm2pal', 'wpal', 'status', 'year', 'month', 'comment'];
 // Разделы карточки артикула
@@ -66,6 +67,25 @@ class TileChat {
       if (/^(спасибо|благодарю|дякую|спс|ок|окей|хорошо|понял|ясно|добре|зрозум[іи]ло)[\s!.,)]*$/iu.test(text)) return [this.msg('Пожалуйста. Если что-то нужно — пишите.')];
       if (!source.configured(this.store)) return [this.msg(source.kind(this.store) === 'db' ? 'В Настройках выбран источник «База», а она пока пустая. Переключите «Характеристики» обратно на Google Таблицу.' : 'Сначала укажите в Настройках, где лежат характеристики: Excel-файл или Google Таблица.', { kind: 'warn' })];
       const model = await source.load(this.store);
+      // «когда выпускался 97742», «история выпусков Kassel»
+      if (/когда\s+(в\s+посл\S*\s+раз\s+)?выпуск|истори\S*\s+выпуск|посл\S*\s+выпуск|коли\s+випуск/iu.test(text)) {
+        const rel = this.releases(); const tokens = text.split(/[\s,;]+/);
+        let list = []; let title = '';
+        const rec = tokens.map((t) => model.byArticle.get(t.toLowerCase())).find(Boolean);
+        if (rec) { list = rel.of(rec.article); title = `${rec.article} · ${rec.collection}`; }
+        else {
+          const lab = names.labels([...model.collections.values()].map((c) => c.name)); let hit = null;
+          for (const k of lab.keys()) if (k.length >= 3 && new RegExp('(^|[^\\p{L}])' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^\\p{L}])', 'iu').test(text) && (!hit || k.length > hit.length)) hit = k;
+          hit = hit || names.find(text, [...lab.keys()]);
+          if (hit) { const c = sheet.norm(lab.get(hit)); list = rel.all().filter((x) => x.first && model.byArticle.get(String(x.article).toLowerCase()) && sheet.norm(model.byArticle.get(String(x.article).toLowerCase()).collection) === c).sort((a, b) => b.date.localeCompare(a.date)); title = lab.get(hit); }
+        }
+        if (!title) return [this.msg('Напишите артикул или коллекцию: «когда выпускался 97742» или «история выпусков Kassel».')];
+        if (!rel.all().length) return [this.msg('История выпусков пока пустая. Она набирается из файлов выпуска, которые вы перетаскиваете в чат, — с каждым файлом. Можно перетащить и старые файлы выпуска: даты возьму из названий.')];
+        if (!list.length) return [this.msg(`${title}: в истории выпусков не встречался. История собрана из файлов выпуска, которые были в чате, начиная с ${Releases.dmy(rel.all().map((x) => x.date).sort()[0])}.`)];
+        const qty = (x) => Object.entries(x.qty).map(([k, v]) => `${String(v).replace('.', ',')}${k && !/^колонка/.test(k) ? ' (' + k + ')' : ''}`).join(', ');
+        const table = { cols: ['Дата', 'Артикул', 'Код', 'Сколько'], rows: list.slice(0, 100).map((x) => [Releases.dmy(x.date), x.article, x.code, qty(x)]) };
+        return [this.msg(`${title}: последний выпуск — ${Releases.dmy(list[0].date)}, всего выпусков в истории — ${new Set(list.map((x) => x.date + x.article)).size}.`, { card: { title: 'История выпусков', table, rows: [], note: `История собрана из файлов выпуска, которые были в чате, начиная с ${Releases.dmy(rel.all().map((x) => x.date).sort()[0])}.`, folder: '', open: '' } })];
+      }
       // «какие артикулы ещё не выпускались» — активные без даты выпуска
       if (/не\s+выпуска|не\s+выпущ|без\s+(даты\s+)?выпуска|ещ[её]\s+не\s+выш/iu.test(text) && !/добав|созда/iu.test(text)) {
         const list = model.rows.filter((r) => !String(r.year || '').trim() && !/^виведен/iu.test(r.status || ''));
@@ -285,12 +305,17 @@ class TileChat {
         for (const x of res.fresh) if (!fresh.has(x.article.toLowerCase())) fresh.set(x.article.toLowerCase(), Object.assign(x, { release: r.date }));
         for (const x of res.first) { const k = x.article.toLowerCase(); if (!first.has(k) || earlier(r.date, first.get(k).release)) first.set(k, Object.assign(x, { release: r.date })); }
       }
+      // история выпусков: когда и что выпускалось — пишем всегда, это не правка таблицы
+      const hist = []; const rel = this.releases();
+      for (const r of releases) { try { const h = rel.add(r.date, r.name, filesLib.releaseRows(r.grid, model)); hist.push(h); } catch (e) { this.journal.add('failed', 'Запись истории выпусков', { file: r.name, error: String(e.message || e) }); } }
+      const histText = hist.length ? hist.map((h) => h.added ? `${Releases.dmy(h.date)} — строк ${h.added}` : `${Releases.dmy(h.date)} — уже было записано`).join('; ') : '';
       const head = `Проверил выпуск: файлов — ${releases.length}, строк первого сорта — ${checked}. `;
       this._first = first;
-      if (!fresh.size) out.push(this.msg(head.trim(), { results: [{ ok: true, text: 'Новых артикулов нет — все уже есть в характеристиках.' }] }));
+      const histRes = histText ? [{ ok: true, text: 'Записал в историю выпусков: ' + histText + '.' }] : [];
+      if (!fresh.size) out.push(this.msg(head.trim(), { results: [{ ok: true, text: 'Новых артикулов нет — все уже есть в характеристиках.' }, ...histRes] }));
       else {
         this.fresh = fresh; const list = [...fresh.values()];
-        out.push(this.msg(head + `Новых артикулов — ${list.length}:\n\n` + list.map((x) => `${x.collection} - ${x.article} - ${x.name}`).join('\n') + '\n\nМогу завести их в характеристики — нажмите кнопку, покажу план.', { options: list.slice(0, 12).map((x) => 'Добавить ' + x.article) }));
+        out.push(this.msg(head + `Новых артикулов — ${list.length}:\n\n` + list.map((x) => `${x.collection} - ${x.article} - ${x.name}`).join('\n') + '\n\nМогу завести их в характеристики — нажмите кнопку, покажу план.', { options: list.slice(0, 12).map((x) => 'Добавить ' + x.article), results: histRes }));
       }
     }
     if (releases.length && this._first && this._first.size) {
@@ -424,6 +449,8 @@ class TileChat {
   }
 
   /** Вторые названия коллекций для других рынков: Denver = Kassel (Польша). Список — twins.json в папке данных */
+  releases() { if (!this._rel) this._rel = new Releases(this.store); return this._rel; }
+
   twins() {
     const file = this.store.read('twins.json', TWINS); const out = [];
     // из характеристик: коллекция записана как «Denver (Kassel)» — значит Denver это второе название Kassel
@@ -469,7 +496,8 @@ class TileChat {
           for (const k of keys) {
             if (!model.cols[k]) continue;
             if (k === 'colorGroup' && sheet.norm(rec.colorGroup) === sheet.norm(rec.color)) continue; // группа = цвет — не повторяем
-            if (k === 'year') { if (rec.year) rows.push({ label: 'Выпущена', value: [ru.value('month', rec.month), rec.year].filter(Boolean).join(' ') }); else if (!/^виведен/iu.test(rec.status || '')) rows.push({ label: 'Выпущена', value: 'ещё не выпускалась', dim: true }); continue; }
+            if (k === 'year') { const rl = this.releases().of(rec.article); if (rl.length) rows.push({ label: 'Последний выпуск', value: Releases.dmy(rl[0].date) + (rl.length > 1 ? ` (выпусков в истории: ${new Set(rl.map((x) => x.date)).size})` : '') }); }
+            if (k === 'year') { if (rec.year) rows.push({ label: 'Первый выпуск', value: [ru.value('month', rec.month), rec.year].filter(Boolean).join(' ') }); else if (!/^виведен/iu.test(rec.status || '')) rows.push({ label: 'Первый выпуск', value: 'ещё не выпускалась', dim: true }); continue; }
             if (rec[k]) rows.push({ label: CARD_LABELS[k] || ru.label(k), value: ru.value(k, rec[k]) }); else if (WANTED.includes(k)) empty.push(ru.label(k).toLowerCase());
           }
           if (rows.length) sections.push({ title, rows });
@@ -492,7 +520,8 @@ class TileChat {
         if (!list.length) { out.push(this.msg(`Коллекции ${p.collection} в характеристиках нет.` + (dir ? ` Но папка в каталоге есть: ${dir}` : ''), dir ? { card: { title: p.collection, rows: [], note: '', folder: dir, open: dir } } : {})); continue; }
         const fk = (f) => String(f || '').replace(/[xх×]/gi, '×');
         const sorted = list.slice().sort((a, b) => fk(a.format).localeCompare(fk(b.format), 'ru', { numeric: true }) || String(a.color).localeCompare(String(b.color)));
-        const table = { cols: ['Артикул', 'Формат', 'Цвет', 'Поверхность', 'Статус'], rows: sorted.slice(0, 80).map((r) => [r.article, fk(r.format), ru.value('color', r.color), ru.value('surface', r.surface) + (r.decor ? ' · ' + r.decor : ''), ru.value('status', r.status)]) };
+        const rel = this.releases(); const hasRel = list.some((r) => rel.last(r.article));
+        const table = { cols: ['Артикул', 'Формат', 'Цвет', 'Поверхность', 'Статус', ...(hasRel ? ['Последний выпуск'] : [])], rows: sorted.slice(0, 80).map((r) => [r.article, fk(r.format), ru.value('color', r.color), ru.value('surface', r.surface) + (r.decor ? ' · ' + r.decor : ''), ru.value('status', r.status), ...(hasRel ? [rel.last(r.article) ? Releases.dmy(rel.last(r.article)) : '—'] : [])]) };
         const brands = [...new Set(list.map((r) => String(r.tm || '').replace(/\s*\(.*\)\s*$/, '')).filter(Boolean))];
         const formats = [...new Set(sorted.map((r) => fk(r.format)).filter(Boolean))];
         const active = list.filter((r) => !/^виведен/iu.test(r.status || '')).length;
@@ -733,6 +762,7 @@ const HELP = [
   '• Файлы: перетащите в чат файл выпуска плитки — проверю, нет ли новых артикулов; файл упаковочных данных — сверю и обновлю упаковку. К файлу можно дописать, что сделать.',
   '• Файл характеристик: перетащите Excel в том же виде, что таблица (например, от технолога), — покажу, чем отличается, и внесу после «Выполнить». Пустые ячейки файла ничего не стирают',
   '• Картинки: перетащите в чат и подпишите «фейсы в Kassel», «рендеры в Kassel» или «живые фото в Kassel» — скопирую в нужную папку коллекции',
+  '• История выпусков: «когда выпускался 97742», «история выпусков Kassel» — собирается из файлов выпуска, которые вы перетаскиваете в чат',
   '• Записать задачу:\n  «задача: отправить файл технологу #плитка»',
   'Перед любым изменением я показываю план. Без кнопки «Выполнить» ничего не меняется. Всё, что не понял или не смог, попадает в журнал разработчику.',
 ].join('\n\n');
