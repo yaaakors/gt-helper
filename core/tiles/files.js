@@ -90,7 +90,7 @@ function releaseRows(grid, model) {
     if (String(r[0] || '').trim()) collection = String(r[0]).trim();
     const code = String(r[1] || '').trim(); if (!code) continue;
     const qty = {}; let total = 0;
-    for (let c = 3; c < r.length; c++) { const v = Number(r[c]); if (Number.isFinite(v) && v > 0 && r[c] !== '') { const k = head[c] || `колонка ${c + 1}`; qty[k] = Math.round(v * 1000) / 1000; total += v; } }
+    for (let c = 3; c < r.length; c++) { const v = Number(r[c]); if (Number.isFinite(v) && v > 0 && r[c] !== '') { let k = head[c] || `колонка ${c + 1}`; if (k in qty) k = `${k} (${c + 1})`; qty[k] = Math.round(v * 1000) / 1000; total += v; } }
     const art = baseArticle(code, model); const rec = model.byArticle.get(art.toLowerCase());
     out.push({ code, article: art, first: rec ? gradeOk(code, rec) : firstGrade(code), collection, qty, total: Math.round(total * 1000) / 1000 });
   }

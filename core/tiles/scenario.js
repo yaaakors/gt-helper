@@ -308,7 +308,7 @@ class TileChat {
       // история выпусков: когда и что выпускалось — пишем всегда, это не правка таблицы
       const hist = []; const rel = this.releases();
       for (const r of releases) { try { const h = rel.add(r.date, r.name, filesLib.releaseRows(r.grid, model)); hist.push(h); } catch (e) { this.journal.add('failed', 'Запись истории выпусков', { file: r.name, error: String(e.message || e) }); } }
-      const histText = hist.length ? hist.map((h) => h.added ? `${Releases.dmy(h.date)} — строк ${h.added}` : `${Releases.dmy(h.date)} — уже было записано`).join('; ') : '';
+      const histText = hist.length ? hist.slice().sort((a, b) => a.date.localeCompare(b.date)).map((h) => h.added ? `${Releases.dmy(h.date)} — строк ${h.added}, из них первого сорта ${h.first}` : `${Releases.dmy(h.date)} — уже было записано`).join('; ') : '';
       const head = `Проверил выпуск: файлов — ${releases.length}, строк первого сорта — ${checked}. `;
       this._first = first;
       const histRes = histText ? [{ ok: true, text: 'Записал в историю выпусков: ' + histText + '.' }] : [];
